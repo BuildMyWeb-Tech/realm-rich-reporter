@@ -1,4 +1,4 @@
-import { Transaction, Budget, RecurringEntry, MonthData, FinancialState, Person, PERSONS, DEFAULT_BUDGETS, EXPENSE_CATEGORIES } from './types';
+import { Transaction, Budget, FinancialState, Person, PERSONS, DEFAULT_BUDGETS, EXPENSE_CATEGORIES, ACCOUNTS, DEBT_EXPENSE_CATEGORIES, HomeOrDebt } from './types';
 
 const STORAGE_KEY = 'family-finance-data';
 
@@ -8,13 +8,24 @@ const defaultState: FinancialState = {
   recurringEntries: [],
   monthData: [],
   initialBalances: { Appa: 0, Amma: 0, Ajai: 0, Mauli: 0 },
+  accountBalances: {},
 };
 
 export function loadState(): FinancialState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultState;
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    // Migrate: add accountBalances if missing
+    if (!parsed.accountBalances) parsed.accountBalances = {};
+    // Migrate: add homeOrDebt to transactions if missing
+    if (parsed.transactions) {
+      parsed.transactions = parsed.transactions.map((t: any) => ({
+        ...t,
+        homeOrDebt: t.homeOrDebt || 'home',
+      }));
+    }
+    return parsed;
   } catch {
     return defaultState;
   }
@@ -32,23 +43,104 @@ export function getMonthTransactions(txns: Transaction[], year: number, month: n
   return txns.filter(t => t.year === year && t.month === month);
 }
 
+// Get account balance for a specific account
+export function getAccountBalance(
+  txns: Transaction[],
+  accountId: string,
+  year: number,
+  month: number,
+  accountBalances: Record<string, number>
+): { opening: number; income: number; expense: number; closing: number } {
+  const initial = accountBalances[accountId] || 0;
+
+  let opening = initial;
+  for (const t of txns) {
+    const tYM = t.year * 12 + t.month;
+    const targetYM = year * 12 + month;
+    if (tYM >= targetYM) continue;
+
+    if (t.accountId === accountId) {
+      if (t.type === 'income') opening += t.amount;
+      if (t.type === 'expense') opening -= t.amount;
+      if (t.type === 'transfer') opening -= t.amount;
+    }
+    if (t.transferToAccountId === accountId) {
+      opening += t.amount;
+    }
+  }
+
+  const monthTxns = getMonthTransactions(txns, year, month);
+  let income = 0, expense = 0;
+  for (const t of monthTxns) {
+    if (t.accountId === accountId) {
+      if (t.type === 'income') income += t.amount;
+      if (t.type === 'expense') expense += t.amount;
+      if (t.type === 'transfer') expense += t.amount;
+    }
+    if (t.transferToAccountId === accountId) {
+      income += t.amount;
+    }
+  }
+
+  return { opening, income, expense, closing: opening + income - expense };
+}
+
 export function getPersonBalance(
   txns: Transaction[],
   person: Person,
   year: number,
   month: number,
-  initialBalances: Record<Person, number>
+  initialBalances: Record<Person, number>,
+  accountBalances?: Record<string, number>
 ): { opening: number; income: number; expense: number; closing: number } {
-  const initial = initialBalances[person] || 0;
+  // If we have account balances, sum up all accounts for this person
+  if (accountBalances) {
+    const personAccounts = ACCOUNTS.filter(a => a.person === person);
+    let totalOpening = 0, totalIncome = 0, totalExpense = 0;
+    for (const acc of personAccounts) {
+      const bal = getAccountBalance(txns, acc.id, year, month, accountBalances);
+      totalOpening += bal.opening;
+      totalIncome += bal.income;
+      totalExpense += bal.expense;
+    }
+    // Also include transactions without accountId (legacy)
+    const initial = initialBalances[person] || 0;
+    let legacyOpening = initial;
+    for (const t of txns) {
+      if (t.accountId) continue; // skip account-tracked txns
+      const tYM = t.year * 12 + t.month;
+      const targetYM = year * 12 + month;
+      if (tYM >= targetYM) continue;
+      if (t.type === 'income' && t.person === person) legacyOpening += t.amount;
+      if (t.type === 'expense' && t.person === person) legacyOpening -= t.amount;
+      if (t.type === 'transfer') {
+        if (t.person === person) legacyOpening -= t.amount;
+        if (t.transferTo === person) legacyOpening += t.amount;
+      }
+    }
+    const legacyMonth = getMonthTransactions(txns, year, month).filter(t => !t.accountId);
+    let legacyIncome = 0, legacyExpense = 0;
+    for (const t of legacyMonth) {
+      if (t.type === 'income' && t.person === person) legacyIncome += t.amount;
+      if (t.type === 'expense' && t.person === person) legacyExpense += t.amount;
+      if (t.type === 'transfer') {
+        if (t.person === person) legacyExpense += t.amount;
+        if (t.transferTo === person) legacyIncome += t.amount;
+      }
+    }
+    totalOpening += legacyOpening;
+    totalIncome += legacyIncome;
+    totalExpense += legacyExpense;
+    return { opening: totalOpening, income: totalIncome, expense: totalExpense, closing: totalOpening + totalIncome - totalExpense };
+  }
 
-  // Calculate balance from all transactions before this month
+  // Legacy fallback
+  const initial = initialBalances[person] || 0;
   let opening = initial;
   for (const t of txns) {
-    const tDate = new Date(t.date);
-    const tYM = tDate.getFullYear() * 12 + tDate.getMonth();
+    const tYM = t.year * 12 + t.month;
     const targetYM = year * 12 + month;
     if (tYM >= targetYM) continue;
-
     if (t.type === 'income' && t.person === person) opening += t.amount;
     if (t.type === 'expense' && t.person === person) opening -= t.amount;
     if (t.type === 'transfer') {
@@ -56,18 +148,16 @@ export function getPersonBalance(
       if (t.transferTo === person) opening += t.amount;
     }
   }
-
   const monthTxns = getMonthTransactions(txns, year, month);
   let income = 0, expense = 0;
   for (const t of monthTxns) {
     if (t.type === 'income' && t.person === person) income += t.amount;
     if (t.type === 'expense' && t.person === person) expense += t.amount;
     if (t.type === 'transfer') {
-      if (t.person === person) expense += t.amount; // treated as outflow for this calc
-      if (t.transferTo === person) income += t.amount; // treated as inflow
+      if (t.person === person) expense += t.amount;
+      if (t.transferTo === person) income += t.amount;
     }
   }
-
   return { opening, income, expense, closing: opening + income - expense };
 }
 
@@ -75,23 +165,22 @@ export function getTotalBalance(
   txns: Transaction[],
   year: number,
   month: number,
-  initialBalances: Record<Person, number>
+  initialBalances: Record<Person, number>,
+  accountBalances?: Record<string, number>
 ) {
-  let totalOpening = 0, totalIncome = 0, totalExpense = 0;
-  for (const p of PERSONS) {
-    const b = getPersonBalance(txns, p, year, month, initialBalances);
-    totalOpening += b.opening;
-    totalIncome += b.income;
-    totalExpense += b.expense;
-  }
-  // For total, transfers cancel out, so recalc without transfer double-counting
   const monthTxns = getMonthTransactions(txns, year, month);
   const realIncome = monthTxns.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
   const realExpense = monthTxns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-  const totalInitial = Object.values(initialBalances).reduce((s, v) => s + v, 0);
 
-  // Opening = total initial + all income before month - all expense before month
-  let opening = totalInitial;
+  // Opening from all accounts + legacy
+  let opening = 0;
+  if (accountBalances) {
+    for (const acc of ACCOUNTS) {
+      opening += accountBalances[acc.id] || 0;
+    }
+  }
+  opening += Object.values(initialBalances).reduce((s, v) => s + v, 0);
+
   for (const t of txns) {
     const tYM = t.year * 12 + t.month;
     const targetYM = year * 12 + month;
@@ -106,6 +195,69 @@ export function getTotalBalance(
     expense: realExpense,
     closing: opening + realIncome - realExpense,
     savings: realIncome - realExpense,
+  };
+}
+
+// Home vs Debt split for monthly summary
+export function getHomeDebtSummary(txns: Transaction[], year: number, month: number) {
+  const monthTxns = getMonthTransactions(txns, year, month);
+
+  const homeIncome = monthTxns.filter(t => t.type === 'income' && t.homeOrDebt === 'home').reduce((s, t) => s + t.amount, 0);
+  const debtIncome = monthTxns.filter(t => t.type === 'income' && t.homeOrDebt === 'debt').reduce((s, t) => s + t.amount, 0);
+  const homeExpense = monthTxns.filter(t => t.type === 'expense' && t.homeOrDebt === 'home').reduce((s, t) => s + t.amount, 0);
+  const debtExpense = monthTxns.filter(t => t.type === 'expense' && t.homeOrDebt === 'debt').reduce((s, t) => s + t.amount, 0);
+
+  return {
+    homeIncome, debtIncome,
+    homeExpense, debtExpense,
+    homeBalance: homeIncome - homeExpense,
+    debtBalance: debtIncome - debtExpense,
+    totalIncome: homeIncome + debtIncome,
+    totalExpense: homeExpense + debtExpense,
+    totalBalance: (homeIncome + debtIncome) - (homeExpense + debtExpense),
+  };
+}
+
+// Expected vs Actual for income
+export function getExpectedVsActualIncome(txns: Transaction[], year: number, month: number) {
+  const monthTxns = getMonthTransactions(txns, year, month).filter(t => t.type === 'income');
+  const result: Record<string, { expected: number; actual: number }> = {};
+  for (const t of monthTxns) {
+    if (!result[t.category]) result[t.category] = { expected: 0, actual: 0 };
+    result[t.category].actual += t.amount;
+    if (t.expectedAmount) result[t.category].expected = t.expectedAmount;
+  }
+  return result;
+}
+
+// Missing money: difference between expected closing and actual cash/bank totals
+export function getMissingMoney(
+  txns: Transaction[],
+  year: number,
+  month: number,
+  initialBalances: Record<Person, number>,
+  accountBalances: Record<string, number>
+) {
+  // Total expected closing (all income - all expenses from opening)
+  const totals = getTotalBalance(txns, year, month, initialBalances, accountBalances);
+
+  // Sum of all account ending balances
+  let accountTotal = 0;
+  for (const acc of ACCOUNTS) {
+    const bal = getAccountBalance(txns, acc.id, year, month, accountBalances);
+    accountTotal += bal.closing;
+  }
+  // Add legacy person balances
+  for (const p of PERSONS) {
+    const legacyTxns = txns.filter(t => !t.accountId);
+    const bal = getPersonBalance(legacyTxns, p, year, month, initialBalances);
+    accountTotal += bal.closing;
+  }
+
+  return {
+    expectedClosing: totals.closing,
+    actualClosing: accountTotal,
+    missingMoney: totals.closing - accountTotal,
   };
 }
 

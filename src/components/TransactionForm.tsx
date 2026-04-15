@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useFinance } from '@/contexts/FinanceContext';
-import { PERSONS, INCOME_CATEGORIES, EXPENSE_CATEGORIES, TransactionType, PaymentMode, Person } from '@/lib/types';
+import { PERSONS, INCOME_CATEGORIES, EXPENSE_CATEGORIES, DEBT_EXPENSE_CATEGORIES, ACCOUNTS, TransactionType, PaymentMode, Person, HomeOrDebt } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,12 +19,28 @@ export default function TransactionForm({ onSuccess }: { onSuccess?: () => void 
     type: 'expense' as TransactionType,
     category: '',
     amount: '',
+    expectedAmount: '',
     paymentMode: 'cash' as PaymentMode,
     notes: '',
     transferTo: '' as string,
+    accountId: '',
+    transferToAccountId: '',
+    homeOrDebt: 'home' as HomeOrDebt,
   });
 
-  const categories = form.type === 'income' ? INCOME_CATEGORIES : form.type === 'expense' ? EXPENSE_CATEGORIES : [];
+  const categories = form.type === 'income'
+    ? INCOME_CATEGORIES
+    : form.type === 'expense'
+      ? (form.homeOrDebt === 'debt' ? DEBT_EXPENSE_CATEGORIES : EXPENSE_CATEGORIES)
+      : [];
+
+  const personAccounts = form.person
+    ? ACCOUNTS.filter(a => a.person === (form.person as Person))
+    : [];
+
+  const transferToAccounts = form.transferTo
+    ? ACCOUNTS.filter(a => a.person === (form.transferTo as Person))
+    : [];
 
   const handleSubmit = () => {
     if (!form.person || !form.amount || Number(form.amount) <= 0) {
@@ -56,10 +72,14 @@ export default function TransactionForm({ onSuccess }: { onSuccess?: () => void 
       paymentMode: form.paymentMode,
       notes: form.notes,
       transferTo: form.type === 'transfer' ? form.transferTo as Person : undefined,
+      accountId: form.accountId || undefined,
+      transferToAccountId: form.type === 'transfer' ? form.transferToAccountId || undefined : undefined,
+      homeOrDebt: form.homeOrDebt,
+      expectedAmount: form.expectedAmount ? Number(form.expectedAmount) : undefined,
     });
 
     toast.success('Transaction added');
-    setForm({ date: today, person: '', type: 'expense', category: '', amount: '', paymentMode: 'cash', notes: '', transferTo: '' });
+    setForm({ date: today, person: '', type: 'expense', category: '', amount: '', expectedAmount: '', paymentMode: 'cash', notes: '', transferTo: '', accountId: '', transferToAccountId: '', homeOrDebt: 'home' });
     setOpen(false);
     onSuccess?.();
   };
@@ -75,7 +95,8 @@ export default function TransactionForm({ onSuccess }: { onSuccess?: () => void 
         <DialogHeader>
           <DialogTitle>Add Transaction</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="space-y-3">
+          {/* Type selector */}
           <div className="grid grid-cols-3 gap-2">
             {(['expense', 'income', 'transfer'] as TransactionType[]).map(t => (
               <Button
@@ -86,6 +107,21 @@ export default function TransactionForm({ onSuccess }: { onSuccess?: () => void 
                 className="capitalize"
               >
                 {t}
+              </Button>
+            ))}
+          </div>
+
+          {/* Home / Debt toggle */}
+          <div className="grid grid-cols-2 gap-2">
+            {(['home', 'debt'] as HomeOrDebt[]).map(hd => (
+              <Button
+                key={hd}
+                variant={form.homeOrDebt === hd ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setForm(f => ({ ...f, homeOrDebt: hd, category: '' }))}
+                className="capitalize"
+              >
+                {hd}
               </Button>
             ))}
           </div>
@@ -102,8 +138,13 @@ export default function TransactionForm({ onSuccess }: { onSuccess?: () => void 
           </div>
 
           <div>
+            <Label>Expected Amount (₹)</Label>
+            <Input type="number" placeholder="Optional" value={form.expectedAmount} onChange={e => setForm(f => ({ ...f, expectedAmount: e.target.value }))} />
+          </div>
+
+          <div>
             <Label>Person</Label>
-            <Select value={form.person} onValueChange={v => setForm(f => ({ ...f, person: v }))}>
+            <Select value={form.person} onValueChange={v => setForm(f => ({ ...f, person: v, accountId: '' }))}>
               <SelectTrigger><SelectValue placeholder="Select person" /></SelectTrigger>
               <SelectContent>
                 {PERSONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
@@ -111,16 +152,42 @@ export default function TransactionForm({ onSuccess }: { onSuccess?: () => void 
             </Select>
           </div>
 
-          {form.type === 'transfer' ? (
+          {/* Account selector */}
+          {form.person && personAccounts.length > 0 && (
             <div>
-              <Label>Transfer To</Label>
-              <Select value={form.transferTo} onValueChange={v => setForm(f => ({ ...f, transferTo: v }))}>
-                <SelectTrigger><SelectValue placeholder="Select recipient" /></SelectTrigger>
+              <Label>Account</Label>
+              <Select value={form.accountId} onValueChange={v => setForm(f => ({ ...f, accountId: v }))}>
+                <SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger>
                 <SelectContent>
-                  {PERSONS.filter(p => p !== form.person).map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                  {personAccounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
+          )}
+
+          {form.type === 'transfer' ? (
+            <>
+              <div>
+                <Label>Transfer To</Label>
+                <Select value={form.transferTo} onValueChange={v => setForm(f => ({ ...f, transferTo: v, transferToAccountId: '' }))}>
+                  <SelectTrigger><SelectValue placeholder="Select recipient" /></SelectTrigger>
+                  <SelectContent>
+                    {PERSONS.filter(p => p !== form.person).map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              {form.transferTo && transferToAccounts.length > 0 && (
+                <div>
+                  <Label>To Account</Label>
+                  <Select value={form.transferToAccountId} onValueChange={v => setForm(f => ({ ...f, transferToAccountId: v }))}>
+                    <SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger>
+                    <SelectContent>
+                      {transferToAccounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </>
           ) : (
             <div>
               <Label>Category</Label>
@@ -133,21 +200,9 @@ export default function TransactionForm({ onSuccess }: { onSuccess?: () => void 
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>Payment Mode</Label>
-              <Select value={form.paymentMode} onValueChange={v => setForm(f => ({ ...f, paymentMode: v as PaymentMode }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="cash">Cash</SelectItem>
-                  <SelectItem value="bank">Bank</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Notes</Label>
-              <Input placeholder="Optional" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
-            </div>
+          <div>
+            <Label>Notes</Label>
+            <Input placeholder="Optional" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
           </div>
 
           <Button onClick={handleSubmit} className="w-full gradient-primary text-primary-foreground">
