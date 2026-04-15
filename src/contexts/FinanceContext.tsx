@@ -11,6 +11,7 @@ interface FinanceContextType {
   addRecurring: (entry: Omit<RecurringEntry, 'id'>) => void;
   deleteRecurring: (id: string) => void;
   setInitialBalance: (person: Person, amount: number) => void;
+  setAccountBalance: (accountId: string, amount: number) => void;
   selectedYear: number;
   selectedMonth: number;
   setSelectedYear: (y: number) => void;
@@ -64,10 +65,14 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     setState(s => ({ ...s, initialBalances: { ...s.initialBalances, [person]: amount } }));
   }, []);
 
+  const setAccountBalance = useCallback((accountId: string, amount: number) => {
+    setState(s => ({ ...s, accountBalances: { ...s.accountBalances, [accountId]: amount } }));
+  }, []);
+
   return (
     <FinanceContext.Provider value={{
       state, addTransaction, deleteTransaction, updateTransaction,
-      setBudget, addRecurring, deleteRecurring, setInitialBalance,
+      setBudget, addRecurring, deleteRecurring, setInitialBalance, setAccountBalance,
       selectedYear, selectedMonth, setSelectedYear, setSelectedMonth,
     }}>
       {children}

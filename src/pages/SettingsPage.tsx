@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useFinance } from '@/contexts/FinanceContext';
-import { PERSONS, Person, EXPENSE_CATEGORIES, INCOME_CATEGORIES } from '@/lib/types';
+import { PERSONS, Person, EXPENSE_CATEGORIES, INCOME_CATEGORIES, ACCOUNTS } from '@/lib/types';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
@@ -9,12 +9,14 @@ import { toast } from 'sonner';
 import { Download } from 'lucide-react';
 
 export default function SettingsPage() {
-  const { state, setInitialBalance, addRecurring, deleteRecurring } = useFinance();
+  const { state, setInitialBalance, setAccountBalance, addRecurring, deleteRecurring } = useFinance();
   const [balances, setBalances] = useState(state.initialBalances);
+  const [acctBalances, setAcctBalances] = useState(state.accountBalances || {});
   const [recForm, setRecForm] = useState({ person: '', type: 'expense' as 'income'|'expense', category: '', amount: '', paymentMode: 'cash' as 'cash'|'bank', dayOfMonth: '1', notes: '' });
 
   const saveBalances = () => {
     PERSONS.forEach(p => setInitialBalance(p, balances[p] || 0));
+    ACCOUNTS.forEach(a => setAccountBalance(a.id, acctBalances[a.id] || 0));
     toast.success('Opening balances saved');
   };
 
@@ -70,18 +72,19 @@ export default function SettingsPage() {
     <div className="pb-20 px-4 pt-4 max-w-lg mx-auto space-y-5 animate-slide-up">
       <h1 className="text-xl font-bold text-foreground">Settings</h1>
 
-      {/* Opening Balances */}
+      {/* Account Opening Balances */}
       <div className="glass-card rounded-xl p-4">
-        <h2 className="text-sm font-semibold mb-3">Opening Balances</h2>
-        <div className="space-y-3">
-          {PERSONS.map(p => (
-            <div key={p} className="flex items-center gap-3">
-              <Label className="w-16 text-sm">{p}</Label>
+        <h2 className="text-sm font-semibold mb-3">Account Opening Balances</h2>
+        <div className="space-y-2">
+          {ACCOUNTS.map(acc => (
+            <div key={acc.id} className="flex items-center gap-3">
+              <Label className="w-28 text-xs">{acc.name}</Label>
               <Input
                 type="number"
-                value={balances[p] || ''}
-                onChange={e => setBalances(b => ({ ...b, [p]: Number(e.target.value) }))}
+                value={acctBalances[acc.id] || ''}
+                onChange={e => setAcctBalances(b => ({ ...b, [acc.id]: Number(e.target.value) }))}
                 placeholder="0"
+                className="text-sm"
               />
             </div>
           ))}
