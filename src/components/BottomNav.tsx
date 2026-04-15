@@ -1,37 +1,50 @@
-import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, ArrowLeftRight, PieChart, Wallet, Settings, Plus } from 'lucide-react';
+import { NavLink } from 'react-router-dom';
+import { LayoutDashboard, ArrowLeftRight, TrendingUp, PieChart, BarChart3, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Home' },
-  { to: '/transactions', icon: ArrowLeftRight, label: 'Transactions' },
-  { to: '/budget', icon: Wallet, label: 'Budget' },
-  { to: '/reports', icon: PieChart, label: 'Reports' },
+  { to: '/transactions', icon: ArrowLeftRight, label: 'Txns' },
+  { to: '/income', icon: TrendingUp, label: 'Income' },
+  { to: '/budget', icon: PieChart, label: 'Expenses' },
+  { to: '/reports', icon: BarChart3, label: 'Summary' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
 export default function BottomNav() {
-  const { pathname } = useLocation();
-
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border safe-area-bottom">
-      <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-2">
-        {navItems.map(item => {
-          const active = pathname === item.to;
-          return (
-            <Link
-              key={item.to}
-              to={item.to}
-              className={cn(
-                'flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-lg transition-colors text-xs',
-                active ? 'text-primary font-medium' : 'text-muted-foreground hover:text-foreground'
-              )}
-            >
-              <item.icon className={cn('h-5 w-5', active && 'stroke-[2.5]')} />
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
+    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-background/90 backdrop-blur-lg border-t border-border/50">
+      <div className="flex items-center justify-around max-w-lg mx-auto px-1 py-1.5">
+        {navItems.map(({ to, icon: Icon, label }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={to === '/'}
+            className={({ isActive }) => cn(
+              'flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-xl transition-all min-w-0',
+              isActive
+                ? 'text-primary'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            {({ isActive }) => (
+              <>
+                <div className={cn(
+                  'h-7 w-7 rounded-lg flex items-center justify-center transition-all',
+                  isActive ? 'bg-primary/15' : ''
+                )}>
+                  <Icon className="h-4 w-4" />
+                </div>
+                <span className={cn(
+                  'text-[10px] font-medium leading-none transition-all',
+                  isActive ? 'text-primary' : ''
+                )}>
+                  {label}
+                </span>
+              </>
+            )}
+          </NavLink>
+        ))}
       </div>
     </nav>
   );

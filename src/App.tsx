@@ -1,5 +1,5 @@
 /**
- * App.tsx — UPGRADED with Auth gate + loading states
+ * App.tsx — UPGRADED with Auth gate + loading states + Income page
  */
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -14,6 +14,7 @@ import Dashboard from "./pages/Dashboard";
 import Transactions from "./pages/Transactions";
 import BudgetPage from "./pages/BudgetPage";
 import Reports from "./pages/Reports";
+import IncomePage from "./pages/IncomePage";
 import SettingsPage from "./pages/SettingsPage";
 import NotFound from "./pages/NotFound";
 import LoginPage from "./pages/LoginPage";
@@ -67,7 +68,7 @@ function LoadingScreen() {
   );
 }
 
-// Sync indicator — small dot in top-right when saving to cloud
+// Sync indicator
 function SyncIndicator() {
   const { isSyncing } = useFinance();
   if (!isSyncing) return null;
@@ -101,7 +102,7 @@ function SyncIndicator() {
   );
 }
 
-// Main app — only shown after login
+// Main app
 function AppContent() {
   const { isLoading } = useFinance();
   const { logout } = useAuth();
@@ -114,6 +115,7 @@ function AppContent() {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/transactions" element={<Transactions />} />
+        <Route path="/income" element={<IncomePage />} />
         <Route path="/budget" element={<BudgetPage />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/settings" element={<SettingsPage />} />
@@ -124,7 +126,7 @@ function AppContent() {
   );
 }
 
-// Auth gate — shows login or app
+// Auth gate
 function AuthGate() {
   const { isLoggedIn } = useAuth();
   if (!isLoggedIn) return <LoginPage />;

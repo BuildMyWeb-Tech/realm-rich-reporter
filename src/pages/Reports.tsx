@@ -1,136 +1,331 @@
-import { useMemo } from 'react';
 import { useFinance } from '@/contexts/FinanceContext';
-import { getMonthTransactions, getCategorySpending, getTotalBalance } from '@/lib/financial-store';
-import { PERSONS, MONTH_NAMES, EXPENSE_CATEGORIES } from '@/lib/types';
+import {
+  getTotalBalance,
+  getHomeDebtSummary,
+  getMonthTransactions,
+  getAccountBalance,
+} from '@/lib/financial-store';
+import { ACCOUNTS, getCashAccounts, getBankAccounts, MONTH_NAMES } from '@/lib/types';
 import MonthSelector from '@/components/MonthSelector';
+import TransactionForm from '@/components/TransactionForm';
+import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
+import { TrendingUp, TrendingDown, Wallet, ArrowUpRight, ArrowDownRight, Home, CreditCard } from 'lucide-react';
 
 export default function Reports() {
   const { state, selectedYear, selectedMonth } = useFinance();
-  const monthTxns = getMonthTransactions(state.transactions, selectedYear, selectedMonth);
-  const totals = getTotalBalance(state.transactions, selectedYear, selectedMonth, state.initialBalances);
+  const totals = getTotalBalance(
+    state.transactions, selectedYear, selectedMonth,
+    state.initialBalances, state.accountBalances
+  );
+  const homeDebt = getHomeDebtSummary(state.transactions, selectedYear, selectedMonth);
 
-  // Category spending
-  const catSpending = getCategorySpending(state.transactions, selectedYear, selectedMonth);
-  const sortedCats = Object.entries(catSpending).sort((a, b) => b[1] - a[1]);
+  const cashAccounts = getCashAccounts();
+  const bankAccounts = getBankAccounts();
 
-  // Person spending
-  const personSpending = useMemo(() => {
-    return PERSONS.map(p => {
-      const pTxns = monthTxns.filter(t => t.person === p);
-      const income = pTxns.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-      const expense = pTxns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-      return { person: p, income, expense };
-    });
-  }, [monthTxns]);
+  const getAccBal = (id: string) =>
+    getAccountBalance(state.transactions, id, selectedYear, selectedMonth, state.accountBalances);
 
-  // Monthly comparison (last 6 months)
-  const monthlyComparison = useMemo(() => {
-    const months: { label: string; income: number; expense: number }[] = [];
-    for (let i = 5; i >= 0; i--) {
-      let m = selectedMonth - i;
-      let y = selectedYear;
-      while (m < 0) { m += 12; y--; }
-      const t = getTotalBalance(state.transactions, y, m, state.initialBalances);
-      months.push({ label: MONTH_NAMES[m].slice(0, 3), income: t.income, expense: t.expense });
-    }
-    return months;
-  }, [state.transactions, selectedYear, selectedMonth, state.initialBalances]);
+  const totalCashOpening = cashAccounts.reduce((s, a) => s + getAccBal(a.id).opening, 0);
+  const totalCashClosing = cashAccounts.reduce((s, a) => s + getAccBal(a.id).closing, 0);
+  const totalOnlineOpening = bankAccounts.reduce((s, a) => s + getAccBal(a.id).opening, 0);
+  const totalOnlineClosing = bankAccounts.reduce((s, a) => s + getAccBal(a.id).closing, 0);
+  const overallOpening = totalCashOpening + totalOnlineOpening;
+  const overallClosing = totalCashClosing + totalOnlineClosing;
 
-  const maxVal = Math.max(...monthlyComparison.map(m => Math.max(m.income, m.expense)), 1);
+  // Previous month for comparison
+  const prevMonth = selectedMonth === 0 ? 11 : selectedMonth - 1;
+  const prevYear = selectedMonth === 0 ? selectedYear - 1 : selectedYear;
+  const prevTotals = getTotalBalance(
+    state.transactions, prevYear, prevMonth,
+    state.initialBalances, state.accountBalances
+  );
+  const diff = overallClosing - prevTotals.closing;
+
+  const fmt = (n: number) => `₹${Math.abs(n).toLocaleString('en-IN')}`;
+  const fmtSigned = (n: number) => `${n >= 0 ? '+' : '-'}₹${Math.abs(n).toLocaleString('en-IN')}`;
+
+  const savingsRate = totals.income > 0
+    ? Math.round(((totals.income - totals.expense) / totals.income) * 100)
+    : 0;
 
   return (
-    <div className="pb-20 px-4 pt-4 max-w-lg mx-auto space-y-5 animate-slide-up">
+    <div className="pb-20 px-4 pt-4 max-w-lg mx-auto space-y-4 animate-slide-up">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-foreground">Reports</h1>
+        <h1 className="text-xl font-bold text-foreground">Monthly Summary</h1>
         <MonthSelector />
       </div>
 
-      {/* Monthly Summary */}
-      <div className="glass-card rounded-xl p-4">
-        <h2 className="text-sm font-semibold mb-3">Monthly Summary</h2>
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div className="bg-success/10 rounded-lg p-3">
-            <p className="text-xs text-muted-foreground">Income</p>
-            <p className="text-sm font-bold text-success">₹{totals.income.toLocaleString('en-IN')}</p>
-          </div>
-          <div className="bg-destructive/10 rounded-lg p-3">
-            <p className="text-xs text-muted-foreground">Expenses</p>
-            <p className="text-sm font-bold text-destructive">₹{totals.expense.toLocaleString('en-IN')}</p>
-          </div>
-          <div className={cn('rounded-lg p-3', totals.savings >= 0 ? 'bg-primary/10' : 'bg-destructive/10')}>
-            <p className="text-xs text-muted-foreground">Savings</p>
-            <p className={cn('text-sm font-bold', totals.savings >= 0 ? 'text-primary' : 'text-destructive')}>
-              ₹{totals.savings.toLocaleString('en-IN')}
-            </p>
-          </div>
-        </div>
-      </div>
+      <p className="text-sm text-muted-foreground -mt-1">
+        {MONTH_NAMES[selectedMonth]} {selectedYear}
+      </p>
 
-      {/* Monthly Trend (bar chart) */}
-      <div className="glass-card rounded-xl p-4">
-        <h2 className="text-sm font-semibold mb-3">6-Month Trend</h2>
-        <div className="flex items-end gap-2 h-32">
-          {monthlyComparison.map((m, i) => (
-            <div key={i} className="flex-1 flex flex-col items-center gap-1">
-              <div className="w-full flex gap-0.5 items-end h-24">
-                <div className="flex-1 bg-success/20 rounded-t" style={{ height: `${(m.income / maxVal) * 100}%` }} />
-                <div className="flex-1 bg-destructive/20 rounded-t" style={{ height: `${(m.expense / maxVal) * 100}%` }} />
+      {/* ── OPENING & ENDING BALANCE CARD ───────────────────────── */}
+      <div className="glass-card rounded-2xl p-5 border border-primary/20">
+        <h2 className="text-xs font-semibold text-primary uppercase tracking-widest mb-4">Balance Flow</h2>
+
+        <div className="space-y-3">
+          {/* Opening */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 rounded-lg bg-muted/50 flex items-center justify-center">
+                <Wallet className="h-4 w-4 text-muted-foreground" />
               </div>
-              <span className="text-[10px] text-muted-foreground">{m.label}</span>
+              <div>
+                <p className="text-xs text-muted-foreground">Opening Balance</p>
+                <p className="text-base font-bold text-foreground">{fmt(overallOpening)}</p>
+              </div>
             </div>
-          ))}
-        </div>
-        <div className="flex gap-4 mt-2 justify-center">
-          <span className="flex items-center gap-1 text-xs text-muted-foreground"><span className="w-2 h-2 bg-success/40 rounded-full" /> Income</span>
-          <span className="flex items-center gap-1 text-xs text-muted-foreground"><span className="w-2 h-2 bg-destructive/40 rounded-full" /> Expense</span>
+          </div>
+
+          {/* Income */}
+          <div className="flex items-center justify-between pl-4 border-l-2 border-success/40">
+            <div className="flex items-center gap-2">
+              <TrendingUp className="h-4 w-4 text-success" />
+              <p className="text-sm text-muted-foreground">+ Total Income</p>
+            </div>
+            <p className="text-sm font-bold text-success">+{fmt(totals.income)}</p>
+          </div>
+
+          {/* Expense */}
+          <div className="flex items-center justify-between pl-4 border-l-2 border-destructive/40">
+            <div className="flex items-center gap-2">
+              <TrendingDown className="h-4 w-4 text-destructive" />
+              <p className="text-sm text-muted-foreground">- Total Expense</p>
+            </div>
+            <p className="text-sm font-bold text-destructive">-{fmt(totals.expense)}</p>
+          </div>
+
+          {/* Divider */}
+          <div className="border-t border-border/50 pt-2" />
+
+          {/* Ending */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className={cn(
+                'h-8 w-8 rounded-lg flex items-center justify-center',
+                overallClosing >= overallOpening ? 'bg-success/15' : 'bg-destructive/15'
+              )}>
+                <Wallet className={cn('h-4 w-4', overallClosing >= overallOpening ? 'text-success' : 'text-destructive')} />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Ending Balance</p>
+                <p className={cn('text-xl font-bold', overallClosing >= overallOpening ? 'text-success' : 'text-destructive')}>
+                  {fmt(overallClosing)}
+                </p>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-muted-foreground">vs last month</p>
+              <p className={cn('text-sm font-semibold flex items-center gap-1', diff >= 0 ? 'text-success' : 'text-destructive')}>
+                {diff >= 0 ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
+                {fmtSigned(diff)}
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Category Spending */}
+      {/* ── SUMMARY STAT CARDS ──────────────────────────────────── */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="glass-card rounded-xl p-4">
+          <p className="text-xs text-muted-foreground mb-1">Total Income</p>
+          <p className="text-lg font-bold text-success">{fmt(totals.income)}</p>
+          <div className="mt-2">
+            <div className="flex justify-between text-xs text-muted-foreground mb-1">
+              <span>Home</span><span>{fmt(homeDebt.homeIncome)}</span>
+            </div>
+            <Progress value={totals.income > 0 ? (homeDebt.homeIncome / totals.income) * 100 : 0} className="h-1 [&>div]:bg-success" />
+            <div className="flex justify-between text-xs text-muted-foreground mt-1">
+              <span>Debt</span><span>{fmt(homeDebt.debtIncome)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="glass-card rounded-xl p-4">
+          <p className="text-xs text-muted-foreground mb-1">Total Expense</p>
+          <p className="text-lg font-bold text-destructive">{fmt(totals.expense)}</p>
+          <div className="mt-2">
+            <div className="flex justify-between text-xs text-muted-foreground mb-1">
+              <span>Home</span><span>{fmt(homeDebt.homeExpense)}</span>
+            </div>
+            <Progress value={totals.expense > 0 ? (homeDebt.homeExpense / totals.expense) * 100 : 0} className="h-1 [&>div]:bg-destructive" />
+            <div className="flex justify-between text-xs text-muted-foreground mt-1">
+              <span>Debt</span><span>{fmt(homeDebt.debtExpense)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Savings rate card */}
       <div className="glass-card rounded-xl p-4">
-        <h2 className="text-sm font-semibold mb-3">Spending by Category</h2>
-        {sortedCats.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-3">No expenses this month</p>
-        ) : (
-          <div className="space-y-2">
-            {sortedCats.map(([cat, amt]) => {
-              const total = totals.expense || 1;
-              return (
-                <div key={cat}>
-                  <div className="flex justify-between text-xs mb-0.5">
-                    <span className="text-foreground font-medium">{cat}</span>
-                    <span className="text-muted-foreground">₹{amt.toLocaleString('en-IN')} ({Math.round(amt / total * 100)}%)</span>
-                  </div>
-                  <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                    <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${(amt / total) * 100}%` }} />
-                  </div>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-sm font-semibold text-foreground">Savings Rate</p>
+          <span className={cn(
+            'text-lg font-bold',
+            savingsRate >= 20 ? 'text-success' : savingsRate >= 0 ? 'text-warning' : 'text-destructive'
+          )}>
+            {savingsRate}%
+          </span>
+        </div>
+        <Progress
+          value={Math.max(0, Math.min(savingsRate, 100))}
+          className={cn(
+            'h-3',
+            savingsRate >= 20 ? '[&>div]:bg-success' :
+            savingsRate >= 0 ? '[&>div]:bg-warning' :
+            '[&>div]:bg-destructive'
+          )}
+        />
+        <div className="flex justify-between text-xs text-muted-foreground mt-2">
+          <span>Net: {totals.income - totals.expense >= 0 ? '+' : ''}{fmt(totals.income - totals.expense)}</span>
+          <span>{savingsRate >= 20 ? '✅ Great!' : savingsRate >= 0 ? '⚠️ Low' : '🔴 Overspent'}</span>
+        </div>
+      </div>
+
+      {/* ── HOME vs DEBT SPLIT ──────────────────────────────────── */}
+      <div className="glass-card rounded-xl p-4">
+        <h2 className="text-sm font-semibold text-foreground mb-4">Home vs Debt Split</h2>
+
+        {/* Home */}
+        <div className="rounded-xl bg-success/8 p-3 mb-3">
+          <div className="flex items-center gap-2 mb-2">
+            <Home className="h-4 w-4 text-success" />
+            <span className="text-sm font-semibold text-success">Home</span>
+          </div>
+          <div className="space-y-1 text-xs">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Income</span>
+              <span className="font-medium text-success">+{fmt(homeDebt.homeIncome)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Expense</span>
+              <span className="font-medium text-destructive">-{fmt(homeDebt.homeExpense)}</span>
+            </div>
+            <div className="flex justify-between border-t border-border/40 pt-1 font-bold text-sm">
+              <span>Balance</span>
+              <span className={homeDebt.homeBalance >= 0 ? 'text-success' : 'text-destructive'}>
+                {homeDebt.homeBalance >= 0 ? '+' : '-'}{fmt(homeDebt.homeBalance)}
+              </span>
+            </div>
+          </div>
+          {homeDebt.homeIncome > 0 && (
+            <Progress
+              value={Math.min((homeDebt.homeExpense / homeDebt.homeIncome) * 100, 100)}
+              className="h-1.5 mt-2 [&>div]:bg-success"
+            />
+          )}
+        </div>
+
+        {/* Debt */}
+        <div className="rounded-xl bg-warning/8 p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <CreditCard className="h-4 w-4 text-warning" />
+            <span className="text-sm font-semibold text-warning">Debt</span>
+          </div>
+          <div className="space-y-1 text-xs">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Income</span>
+              <span className="font-medium text-success">+{fmt(homeDebt.debtIncome)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Expense</span>
+              <span className="font-medium text-destructive">-{fmt(homeDebt.debtExpense)}</span>
+            </div>
+            <div className="flex justify-between border-t border-border/40 pt-1 font-bold text-sm">
+              <span>Balance</span>
+              <span className={homeDebt.debtBalance >= 0 ? 'text-success' : 'text-destructive'}>
+                {homeDebt.debtBalance >= 0 ? '+' : '-'}{fmt(homeDebt.debtBalance)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Grand Total */}
+        <div className="mt-3 pt-3 border-t border-border/50 space-y-1">
+          <div className="flex justify-between text-sm font-bold">
+            <span>Total Income</span>
+            <span className="text-success">+{fmt(homeDebt.totalIncome)}</span>
+          </div>
+          <div className="flex justify-between text-sm font-bold">
+            <span>Total Expense</span>
+            <span className="text-destructive">-{fmt(homeDebt.totalExpense)}</span>
+          </div>
+          <div className="flex justify-between text-base font-bold text-primary pt-1 border-t border-border/50">
+            <span>Net Balance</span>
+            <span>{homeDebt.totalBalance >= 0 ? '+' : '-'}{fmt(homeDebt.totalBalance)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── ACCOUNT BALANCES CARD ───────────────────────────────── */}
+      <div className="glass-card rounded-xl p-4">
+        <h2 className="text-sm font-semibold text-foreground mb-3">Account Balances</h2>
+
+        {/* Cash */}
+        <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-2">Cash</p>
+        <div className="space-y-1.5 mb-4">
+          {cashAccounts.map(acc => {
+            const bal = getAccBal(acc.id);
+            return (
+              <div key={acc.id} className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">{acc.name}</span>
+                <div className="flex gap-6">
+                  <span className="text-muted-foreground w-20 text-right">{fmt(bal.opening)}</span>
+                  <span className={cn('font-medium w-20 text-right', bal.closing < 0 ? 'text-destructive' : '')}>{fmt(bal.closing)}</span>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Person-wise */}
-      <div className="glass-card rounded-xl p-4">
-        <h2 className="text-sm font-semibold mb-3">Person-wise Summary</h2>
-        <div className="space-y-2">
-          {personSpending.map(p => (
-            <div key={p.person} className="flex items-center justify-between py-1 border-b border-border/50 last:border-0">
-              <div className="flex items-center gap-2">
-                <div className="h-7 w-7 rounded-full gradient-primary flex items-center justify-center text-xs font-bold text-primary-foreground">{p.person[0]}</div>
-                <span className="text-sm font-medium">{p.person}</span>
               </div>
-              <div className="text-right text-xs">
-                <span className="text-success">+₹{p.income.toLocaleString('en-IN')}</span>
-                <span className="text-muted-foreground mx-1">/</span>
-                <span className="text-destructive">-₹{p.expense.toLocaleString('en-IN')}</span>
-              </div>
+            );
+          })}
+          <div className="flex items-center justify-between text-xs font-bold pt-1 border-t border-border/40">
+            <span>Total Cash</span>
+            <div className="flex gap-6">
+              <span className="w-20 text-right">{fmt(totalCashOpening)}</span>
+              <span className="w-20 text-right">{fmt(totalCashClosing)}</span>
             </div>
-          ))}
+          </div>
+        </div>
+
+        {/* Bank */}
+        <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-2">Bank / Online</p>
+        <div className="space-y-1.5 mb-2">
+          {bankAccounts.map(acc => {
+            const bal = getAccBal(acc.id);
+            return (
+              <div key={acc.id} className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">{acc.name}</span>
+                <div className="flex gap-6">
+                  <span className="text-muted-foreground w-20 text-right">{fmt(bal.opening)}</span>
+                  <span className={cn('font-medium w-20 text-right', bal.closing < 0 ? 'text-destructive' : '')}>{fmt(bal.closing)}</span>
+                </div>
+              </div>
+            );
+          })}
+          <div className="flex items-center justify-between text-xs font-bold pt-1 border-t border-border/40">
+            <span>Total Online</span>
+            <div className="flex gap-6">
+              <span className="w-20 text-right">{fmt(totalOnlineOpening)}</span>
+              <span className="w-20 text-right">{fmt(totalOnlineClosing)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Column headers */}
+        <div className="flex justify-end gap-6 text-xs text-muted-foreground mb-1 pr-0">
+          <span className="w-20 text-right">Opening</span>
+          <span className="w-20 text-right">Closing</span>
+        </div>
+
+        <div className="flex items-center justify-between text-sm font-bold text-primary pt-2 border-t border-border/50">
+          <span>Overall Total</span>
+          <div className="flex gap-6">
+            <span className="w-20 text-right">{fmt(overallOpening)}</span>
+            <span className="w-20 text-right">{fmt(overallClosing)}</span>
+          </div>
         </div>
       </div>
+
+      <TransactionForm />
     </div>
   );
 }
