@@ -2,10 +2,9 @@ import { useState, useMemo } from 'react';
 import { useFinance } from '@/contexts/FinanceContext';
 import { getMonthTransactions } from '@/lib/financial-store';
 import {
-  INCOME_CATEGORIES,
-  DEBT_EXPENSE_CATEGORIES,
+  HOME_INCOME_CATEGORIES,
+  DEBT_INCOME_CATEGORIES,
   DEFAULT_EXPECTED_INCOME,
-  DEFAULT_EXPECTED_DEBT_EXPENSE,
 } from '@/lib/types';
 import MonthSelector from '@/components/MonthSelector';
 import TransactionForm from '@/components/TransactionForm';
@@ -14,7 +13,6 @@ import { cn } from '@/lib/utils';
 import { Pencil, Check, X, TrendingUp, TrendingDown } from 'lucide-react';
 import { toast } from 'sonner';
 
-// We store expected overrides in local state (per session) — can be persisted via setBudget if needed
 type ExpectedMap = Record<string, number>;
 
 function IncomeRow({
@@ -48,10 +46,10 @@ function IncomeRow({
       actual > expected && expected > 0 ? 'bg-success/5' : '',
     )}>
       {/* Category */}
-      <span className="flex-1 font-medium text-foreground truncate">{category}</span>
+      <span className="flex-1 font-medium text-foreground truncate min-w-0">{category}</span>
 
       {/* Expected */}
-      <div className="w-24 text-right">
+      <div className="w-24 text-right shrink-0">
         {editing ? (
           <div className="flex items-center gap-1 justify-end">
             <Input
@@ -78,7 +76,7 @@ function IncomeRow({
 
       {/* Actual */}
       <span className={cn(
-        'w-20 text-right font-semibold',
+        'w-20 text-right font-semibold shrink-0',
         actual > 0 ? 'text-success' : 'text-muted-foreground'
       )}>
         ₹{actual.toLocaleString('en-IN')}
@@ -86,7 +84,7 @@ function IncomeRow({
 
       {/* Balance */}
       <span className={cn(
-        'w-20 text-right font-bold',
+        'w-20 text-right font-bold shrink-0',
         balance > 0 ? 'text-warning' : balance < 0 ? 'text-success' : 'text-muted-foreground'
       )}>
         {balance >= 0 ? '-' : '+'}₹{Math.abs(balance).toLocaleString('en-IN')}
@@ -104,9 +102,9 @@ export default function IncomePage() {
     [state.transactions, selectedYear, selectedMonth]
   );
 
-  const getExpected = (cat: string, defaults: Record<string, number>) => {
+  const getExpected = (cat: string) => {
     if (cat in expectedOverrides) return expectedOverrides[cat];
-    return defaults[cat] ?? 0;
+    return DEFAULT_EXPECTED_INCOME[cat] ?? 0;
   };
 
   const handleEditExpected = (cat: string, val: number) => {
@@ -114,7 +112,13 @@ export default function IncomePage() {
   };
 
   // ── HOME INCOME ──────────────────────────────────────────────
-  const homeIncomeCategories = INCOME_CATEGORIES.filter(c => c !== 'Debt Income');
+  // Use static HOME_INCOME_CATEGORIES, plus any custom home income sources from settings
+  const customHomeSources = (state.incomeSources || []).filter(s => s.group === 'home');
+  const homeCategories = [
+    ...HOME_INCOME_CATEGORIES,
+    ...customHomeSources.map(s => s.name),
+  ];
+
   const homeActuals = useMemo(() => {
     const map: Record<string, number> = {};
     for (const t of monthTxns) {
@@ -125,11 +129,17 @@ export default function IncomePage() {
     return map;
   }, [monthTxns]);
 
-  const homeTotalExpected = homeIncomeCategories.reduce((s, c) => s + getExpected(c, DEFAULT_EXPECTED_INCOME), 0);
-  const homeTotalActual = homeIncomeCategories.reduce((s, c) => s + (homeActuals[c] || 0), 0);
+  const homeTotalExpected = homeCategories.reduce((s, c) => s + getExpected(c), 0);
+  const homeTotalActual = homeCategories.reduce((s, c) => s + (homeActuals[c] || 0), 0);
   const homeTotalBalance = homeTotalExpected - homeTotalActual;
 
   // ── DEBT INCOME ──────────────────────────────────────────────
+  const customDebtSources = (state.incomeSources || []).filter(s => s.group === 'debt');
+  const debtCategories = [
+    ...DEBT_INCOME_CATEGORIES,
+    ...customDebtSources.map(s => s.name),
+  ];
+
   const debtActuals = useMemo(() => {
     const map: Record<string, number> = {};
     for (const t of monthTxns) {
@@ -140,28 +150,22 @@ export default function IncomePage() {
     return map;
   }, [monthTxns]);
 
-  const debtIncomeCategories = ['Debt Income'];
-  const debtTotalExpected = debtIncomeCategories.reduce((s, c) => s + getExpected(c, DEFAULT_EXPECTED_INCOME), 0);
-  const debtTotalActual = debtIncomeCategories.reduce((s, c) => s + (debtActuals[c] || 0), 0);
+  const debtTotalExpected = debtCategories.reduce((s, c) => s + getExpected(c), 0);
+  const debtTotalActual = debtCategories.reduce((s, c) => s + (debtActuals[c] || 0), 0);
   const debtTotalBalance = debtTotalExpected - debtTotalActual;
 
-  // Also count any income txns tagged as debt
-  const extraDebtIncome = monthTxns
-    .filter(t => t.type === 'income' && t.homeOrDebt === 'debt' && !debtIncomeCategories.includes(t.category))
-    .reduce((s, t) => s + t.amount, 0);
-
   const overallExpected = homeTotalExpected + debtTotalExpected;
-  const overallActual = homeTotalActual + debtTotalActual + extraDebtIncome;
+  const overallActual = homeTotalActual + debtTotalActual;
   const overallBalance = overallExpected - overallActual;
 
   const fmt = (n: number) => `₹${n.toLocaleString('en-IN')}`;
 
   const TableHeader = () => (
     <div className="flex items-center gap-2 py-2 px-3 text-xs font-semibold text-muted-foreground border-b border-border/40 mb-1">
-      <span className="flex-1">Source</span>
-      <span className="w-24 text-right">Expected</span>
-      <span className="w-20 text-right">Actual</span>
-      <span className="w-20 text-right">Balance</span>
+      <span className="flex-1 min-w-0">Source</span>
+      <span className="w-24 text-right shrink-0">Expected</span>
+      <span className="w-20 text-right shrink-0">Actual</span>
+      <span className="w-20 text-right shrink-0">Balance</span>
     </div>
   );
 
@@ -169,15 +173,15 @@ export default function IncomePage() {
     label: string; expected: number; actual: number; balance: number; color: string;
   }) => (
     <div className={cn('flex items-center gap-2 py-2 px-3 rounded-xl text-xs font-bold mt-1', color)}>
-      <span className="flex-1">{label}</span>
-      <span className="w-24 text-right">{fmt(expected)}</span>
-      <span className="w-20 text-right">{fmt(actual)}</span>
-      <span className="w-20 text-right">{balance >= 0 ? '-' : '+'}{fmt(Math.abs(balance))}</span>
+      <span className="flex-1 min-w-0">{label}</span>
+      <span className="w-24 text-right shrink-0">{fmt(expected)}</span>
+      <span className="w-20 text-right shrink-0">{fmt(actual)}</span>
+      <span className="w-20 text-right shrink-0">{balance >= 0 ? '-' : '+'}{fmt(Math.abs(balance))}</span>
     </div>
   );
 
   return (
-    <div className="pb-20 px-4 pt-4 max-w-lg mx-auto space-y-4 animate-slide-up">
+    <div className="pb-20 px-4 pt-4 max-w-2xl mx-auto space-y-4 animate-slide-up">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold text-foreground">Income</h1>
         <MonthSelector />
@@ -201,58 +205,62 @@ export default function IncomePage() {
         </div>
       </div>
 
-      {/* HOME INCOME */}
-      <div className="glass-card rounded-xl p-4">
+      {/* HOME INCOME TABLE */}
+      <div className="glass-card rounded-xl p-4 overflow-x-auto">
         <div className="flex items-center gap-2 mb-3">
-          <div className="h-7 w-7 rounded-lg bg-success/15 flex items-center justify-center">
+          <div className="h-7 w-7 rounded-lg bg-success/15 flex items-center justify-center shrink-0">
             <TrendingUp className="h-3.5 w-3.5 text-success" />
           </div>
           <h2 className="text-sm font-semibold text-foreground">Home Income</h2>
         </div>
-        <TableHeader />
-        {homeIncomeCategories.map(cat => (
-          <IncomeRow
-            key={cat}
-            category={cat}
-            expected={getExpected(cat, DEFAULT_EXPECTED_INCOME)}
-            actual={homeActuals[cat] || 0}
-            onEditExpected={handleEditExpected}
+        <div className="min-w-[380px]">
+          <TableHeader />
+          {homeCategories.map(cat => (
+            <IncomeRow
+              key={cat}
+              category={cat}
+              expected={getExpected(cat)}
+              actual={homeActuals[cat] || 0}
+              onEditExpected={handleEditExpected}
+            />
+          ))}
+          <SectionTotal
+            label="Total Home Income"
+            expected={homeTotalExpected}
+            actual={homeTotalActual}
+            balance={homeTotalBalance}
+            color="bg-success/10 text-success"
           />
-        ))}
-        <SectionTotal
-          label="Total Home Income"
-          expected={homeTotalExpected}
-          actual={homeTotalActual}
-          balance={homeTotalBalance}
-          color="bg-success/10 text-success"
-        />
+        </div>
       </div>
 
-      {/* DEBT INCOME */}
-      <div className="glass-card rounded-xl p-4">
+      {/* DEBT INCOME TABLE */}
+      <div className="glass-card rounded-xl p-4 overflow-x-auto">
         <div className="flex items-center gap-2 mb-3">
-          <div className="h-7 w-7 rounded-lg bg-warning/15 flex items-center justify-center">
+          <div className="h-7 w-7 rounded-lg bg-warning/15 flex items-center justify-center shrink-0">
             <TrendingDown className="h-3.5 w-3.5 text-warning" />
           </div>
           <h2 className="text-sm font-semibold text-foreground">Debt Income</h2>
         </div>
-        <TableHeader />
-        {debtIncomeCategories.map(cat => (
-          <IncomeRow
-            key={cat}
-            category={cat}
-            expected={getExpected(cat, DEFAULT_EXPECTED_INCOME)}
-            actual={(debtActuals[cat] || 0) + extraDebtIncome}
-            onEditExpected={handleEditExpected}
+        <div className="min-w-[380px]">
+          <TableHeader />
+          {debtCategories.map(cat => (
+            <IncomeRow
+              key={cat}
+              category={cat}
+              expected={getExpected(cat)}
+              actual={debtActuals[cat] || 0}
+              onEditExpected={handleEditExpected}
+            />
+          ))}
+          <SectionTotal
+            label="Total Debt Income"
+            expected={debtTotalExpected}
+            actual={debtTotalActual}
+            balance={debtTotalBalance}
+            color="bg-warning/10 text-warning"
           />
-        ))}
-        <SectionTotal
-          label="Total Debt Income"
-          expected={debtTotalExpected}
-          actual={debtTotalActual + extraDebtIncome}
-          balance={debtTotalBalance - extraDebtIncome}
-          color="bg-warning/10 text-warning"
-        />
+        </div>
       </div>
 
       {/* OVERALL TOTAL */}
@@ -260,12 +268,28 @@ export default function IncomePage() {
         <h2 className="text-sm font-semibold text-primary mb-3">Overall Income Total</h2>
         <div className="space-y-2 text-xs">
           <div className="flex justify-between">
-            <span className="text-muted-foreground">Total Expected</span>
-            <span className="font-semibold">{fmt(overallExpected)}</span>
+            <span className="text-muted-foreground">Total Home Expected</span>
+            <span className="font-semibold">{fmt(homeTotalExpected)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-muted-foreground">Total Actual</span>
-            <span className="font-semibold text-success">{fmt(overallActual)}</span>
+            <span className="text-muted-foreground">Total Home Actual</span>
+            <span className="font-semibold text-success">{fmt(homeTotalActual)}</span>
+          </div>
+          <div className="flex justify-between border-t border-border/40 pt-2">
+            <span className="text-muted-foreground">Total Debt Expected</span>
+            <span className="font-semibold">{fmt(debtTotalExpected)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Total Debt Actual</span>
+            <span className="font-semibold text-success">{fmt(debtTotalActual)}</span>
+          </div>
+          <div className="flex justify-between border-t border-border/40 pt-2">
+            <span className="font-bold text-sm text-foreground">Overall Expected</span>
+            <span className="font-bold text-sm">{fmt(overallExpected)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="font-bold text-sm text-foreground">Overall Actual</span>
+            <span className="font-bold text-sm text-success">{fmt(overallActual)}</span>
           </div>
           <div className="flex justify-between border-t border-border/40 pt-2">
             <span className="font-bold text-sm text-foreground">Balance</span>

@@ -58,10 +58,9 @@ export default function Dashboard() {
       </div>
 
       {/* Account Balances - Opening & Ending */}
-      <div className="glass-card rounded-xl p-4">
+      {/* <div className="glass-card rounded-xl p-4">
         <h2 className="text-sm font-semibold text-foreground mb-3">Account Balances</h2>
         <div className="grid grid-cols-2 gap-4">
-          {/* Opening */}
           <div>
             <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase">Opening</h3>
             <div className="space-y-1">
@@ -76,7 +75,6 @@ export default function Dashboard() {
               })}
             </div>
           </div>
-          {/* Ending */}
           <div>
             <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase">Ending</h3>
             <div className="space-y-1">
@@ -93,7 +91,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Totals */}
         <div className="mt-3 pt-3 border-t border-border/50 space-y-1">
           <div className="flex justify-between text-xs font-semibold">
             <span>Total Cash</span>
@@ -108,10 +105,10 @@ export default function Dashboard() {
             <span className="flex gap-6"><span>{fmt(overallOpening)}</span><span>{fmt(overallClosing)}</span></span>
           </div>
         </div>
-      </div>
+      </div> */}
 
       {/* Home vs Debt Summary */}
-      <div className="glass-card rounded-xl p-4">
+      {/* <div className="glass-card rounded-xl p-4">
         <h2 className="text-sm font-semibold text-foreground mb-3">Monthly Summary</h2>
         <div className="space-y-2">
           <div className="flex justify-between text-xs">
@@ -157,7 +154,7 @@ export default function Dashboard() {
             <span>{fmt(homeDebt.totalBalance)}</span>
           </div>
         </div>
-      </div>
+      </div> */}
 
       {/* Missing Money */}
       <div className="glass-card rounded-xl p-4">
@@ -205,7 +202,7 @@ export default function Dashboard() {
       )}
 
       {/* Recent Transactions */}
-      <div className="glass-card rounded-xl p-4">
+      {/* <div className="glass-card rounded-xl p-4">
         <h2 className="text-sm font-semibold text-foreground mb-3">Recent Transactions</h2>
         {recentTxns.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-4">No transactions this month</p>
@@ -230,7 +227,7 @@ export default function Dashboard() {
             ))}
           </div>
         )}
-      </div>
+      </div> */}
 
       <TransactionForm />
     </div>

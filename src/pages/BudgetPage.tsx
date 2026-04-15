@@ -32,6 +32,13 @@ export default function BudgetPage() {
     return map;
   }, [monthTxns]);
 
+  // Also include custom debt expense sources from settings
+  const customDebtExpenses = (state.expenseSources || []).filter(s => s.group === 'debt');
+  const allDebtCategories = [
+    ...DEBT_EXPENSE_CATEGORIES,
+    ...customDebtExpenses.map(s => s.name),
+  ];
+
   const [debtExpected, setDebtExpected] = useState<Record<string, number>>({ ...DEFAULT_EXPECTED_DEBT_EXPENSE });
   const [editingDebt, setEditingDebt] = useState<string | null>(null);
   const [editDebtValue, setEditDebtValue] = useState('');
@@ -61,8 +68,8 @@ export default function BudgetPage() {
   const overspentCount = categories.filter(c => c.overspent).length;
   const nearLimitCount = categories.filter(c => !c.overspent && c.percent >= 80).length;
 
-  const debtTotalExpected = DEBT_EXPENSE_CATEGORIES.reduce((s, c) => s + (debtExpected[c] || 0), 0);
-  const debtTotalActual = DEBT_EXPENSE_CATEGORIES.reduce((s, c) => s + (debtActuals[c] || 0), 0);
+  const debtTotalExpected = allDebtCategories.reduce((s, c) => s + (debtExpected[c] || 0), 0);
+  const debtTotalActual = allDebtCategories.reduce((s, c) => s + (debtActuals[c] || 0), 0);
   const debtTotalBalance = debtTotalExpected - debtTotalActual;
 
   const fmt = (n: number) => `₹${n.toLocaleString('en-IN')}`;
@@ -74,14 +81,14 @@ export default function BudgetPage() {
   };
 
   return (
-    <div className="pb-20 px-4 pt-4 max-w-lg mx-auto space-y-4 animate-slide-up">
-      <div className="flex items-center justify-between">
+    <div className="pb-20 px-2 sm:px-4 pt-4 max-w-2xl mx-auto space-y-4 animate-slide-up">
+      <div className="flex items-center justify-between px-2">
         <h1 className="text-xl font-bold text-foreground">Expenses</h1>
         <MonthSelector />
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-2 gap-2 px-2">
         <div className="glass-card rounded-xl p-3">
           <p className="text-xs text-muted-foreground mb-1">Total Budget</p>
           <p className="text-base font-bold">{fmt(totalBudget)}</p>
@@ -95,7 +102,7 @@ export default function BudgetPage() {
       </div>
 
       {/* Overall progress */}
-      <div className="glass-card rounded-xl p-4">
+      <div className="glass-card rounded-xl p-4 mx-2">
         <div className="flex justify-between items-center mb-2">
           <span className="text-xs text-muted-foreground">Overall Usage</span>
           <span className="text-xs font-semibold">{Math.round((totalSpent / totalBudget) * 100)}%</span>
@@ -124,161 +131,170 @@ export default function BudgetPage() {
       </div>
 
       {/* HOME EXPENSE TABLE */}
-      <div className="glass-card rounded-xl p-4">
+      <div className="glass-card rounded-xl p-4 mx-2 overflow-x-auto">
         <h2 className="text-sm font-semibold text-foreground mb-3">🏠 Home Expenses</h2>
 
-        {/* Column headers */}
-        <div className="flex items-center gap-2 text-xs text-muted-foreground px-1 mb-2 font-semibold border-b border-border/40 pb-2">
-          <span className="flex-1">Category</span>
-          <span className="w-20 text-right">Budget</span>
-          <span className="w-18 text-right">Actual</span>
-          <span className="w-18 text-right">Balance</span>
-        </div>
+        {/* Min-width wrapper to prevent squishing */}
+        <div className="min-w-[480px]">
+          {/* Column headers */}
+          <div className="flex items-center gap-3 text-xs text-muted-foreground px-2 mb-2 font-semibold border-b border-border/40 pb-2">
+            <span className="w-5 shrink-0"></span>
+            <span className="flex-1 min-w-[100px]">Category</span>
+            <span className="w-24 text-right shrink-0">Budget</span>
+            <span className="w-24 text-right shrink-0">Actual</span>
+            <span className="w-24 text-right shrink-0">Balance</span>
+          </div>
 
-        <div className="space-y-1">
-          {categories.map(c => (
-            <div
-              key={c.category}
-              className={cn(
-                'rounded-lg px-2 py-2 transition-colors',
-                c.overspent ? 'bg-destructive/8' : c.percent >= 80 ? 'bg-warning/8' : ''
-              )}
-            >
-              <div className="flex items-center gap-2">
-                {statusIcon(c)}
-                <span className="flex-1 text-xs font-medium text-foreground truncate">{c.category}</span>
-
-                {/* Budget - editable */}
-                {editing === c.category ? (
-                  <div className="flex items-center gap-1">
-                    <Input
-                      type="number"
-                      className="w-20 h-6 text-xs px-1"
-                      value={editValue}
-                      onChange={e => setEditValue(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') handleSave(c.category); if (e.key === 'Escape') setEditing(null); }}
-                      autoFocus
-                    />
-                    <button onClick={() => handleSave(c.category)} className="text-success"><Check className="h-3 w-3" /></button>
-                    <button onClick={() => setEditing(null)} className="text-muted-foreground"><X className="h-3 w-3" /></button>
-                  </div>
-                ) : (
-                  <button
-                    className="w-20 text-right text-xs text-muted-foreground hover:text-primary flex items-center justify-end gap-0.5 group"
-                    onClick={() => { setEditing(c.category); setEditValue(String(c.budget)); }}
-                  >
-                    {fmt(c.budget)}
-                    <Pencil className="h-2.5 w-2.5 opacity-0 group-hover:opacity-60" />
-                  </button>
+          <div className="space-y-1">
+            {categories.map(c => (
+              <div
+                key={c.category}
+                className={cn(
+                  'rounded-lg px-2 py-2 transition-colors',
+                  c.overspent ? 'bg-destructive/8' : c.percent >= 80 ? 'bg-warning/8' : ''
                 )}
+              >
+                <div className="flex items-center gap-3">
+                  {statusIcon(c)}
+                  <span className="flex-1 text-xs font-medium text-foreground min-w-[100px]">{c.category}</span>
 
-                <span className={cn('w-18 text-right text-xs font-semibold', c.actual > 0 ? 'text-foreground' : 'text-muted-foreground')}>
-                  {fmt(c.actual)}
-                </span>
-                <span className={cn(
-                  'w-18 text-right text-xs font-bold',
-                  c.remaining < 0 ? 'text-destructive' : c.remaining < c.budget * 0.2 ? 'text-warning' : 'text-success'
-                )}>
-                  {c.remaining >= 0 ? fmt(c.remaining) : `-${fmt(Math.abs(c.remaining))}`}
-                </span>
-              </div>
-
-              {/* Progress bar */}
-              <div className="mt-1.5 ml-5">
-                <Progress
-                  value={Math.min(c.percent, 100)}
-                  className={cn(
-                    'h-1',
-                    c.overspent ? '[&>div]:bg-destructive' :
-                    c.percent >= 80 ? '[&>div]:bg-warning' :
-                    '[&>div]:bg-success'
-                  )}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Home total */}
-        <div className="flex items-center gap-2 px-1 pt-3 mt-2 border-t border-border/50 text-xs font-bold">
-          <span className="flex-1">Total Home</span>
-          <span className="w-20 text-right">{fmt(totalBudget)}</span>
-          <span className="w-18 text-right text-destructive">{fmt(totalSpent)}</span>
-          <span className={cn('w-18 text-right', totalBudget - totalSpent >= 0 ? 'text-success' : 'text-destructive')}>
-            {totalBudget - totalSpent >= 0 ? fmt(totalBudget - totalSpent) : `-${fmt(Math.abs(totalBudget - totalSpent))}`}
-          </span>
-        </div>
-      </div>
-
-      {/* DEBT EXPENSE TABLE */}
-      <div className="glass-card rounded-xl p-4">
-        <h2 className="text-sm font-semibold text-foreground mb-3">💳 Debt Expenses</h2>
-
-        <div className="flex items-center gap-2 text-xs text-muted-foreground px-1 mb-2 font-semibold border-b border-border/40 pb-2">
-          <span className="flex-1">Category</span>
-          <span className="w-20 text-right">Expected</span>
-          <span className="w-18 text-right">Actual</span>
-          <span className="w-18 text-right">Balance</span>
-        </div>
-
-        <div className="space-y-1">
-          {DEBT_EXPENSE_CATEGORIES.map(cat => {
-            const exp = debtExpected[cat] || 0;
-            const actual = debtActuals[cat] || 0;
-            const bal = exp - actual;
-            const over = actual > exp && exp > 0;
-            return (
-              <div key={cat} className={cn('rounded-lg px-2 py-2', over ? 'bg-destructive/8' : '')}>
-                <div className="flex items-center gap-2">
-                  {over
-                    ? <AlertCircle className="h-3.5 w-3.5 text-destructive shrink-0" />
-                    : <CheckCircle className="h-3.5 w-3.5 text-success shrink-0 opacity-50" />
-                  }
-                  <span className="flex-1 text-xs font-medium text-foreground truncate">{cat}</span>
-
-                  {editingDebt === cat ? (
-                    <div className="flex items-center gap-1">
+                  {/* Budget - editable */}
+                  {editing === c.category ? (
+                    <div className="flex items-center gap-1 w-24 justify-end shrink-0">
                       <Input
                         type="number"
                         className="w-20 h-6 text-xs px-1"
-                        value={editDebtValue}
-                        onChange={e => setEditDebtValue(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') handleSaveDebt(cat); if (e.key === 'Escape') setEditingDebt(null); }}
+                        value={editValue}
+                        onChange={e => setEditValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleSave(c.category); if (e.key === 'Escape') setEditing(null); }}
                         autoFocus
                       />
-                      <button onClick={() => handleSaveDebt(cat)} className="text-success"><Check className="h-3 w-3" /></button>
-                      <button onClick={() => setEditingDebt(null)} className="text-muted-foreground"><X className="h-3 w-3" /></button>
+                      <button onClick={() => handleSave(c.category)} className="text-success"><Check className="h-3 w-3" /></button>
+                      <button onClick={() => setEditing(null)} className="text-muted-foreground"><X className="h-3 w-3" /></button>
                     </div>
                   ) : (
                     <button
-                      className="w-20 text-right text-xs text-muted-foreground hover:text-primary flex items-center justify-end gap-0.5 group"
-                      onClick={() => { setEditingDebt(cat); setEditDebtValue(String(exp)); }}
+                      className="w-24 text-right text-xs text-muted-foreground hover:text-primary flex items-center justify-end gap-0.5 group shrink-0"
+                      onClick={() => { setEditing(c.category); setEditValue(String(c.budget)); }}
                     >
-                      {fmt(exp)}
+                      {fmt(c.budget)}
                       <Pencil className="h-2.5 w-2.5 opacity-0 group-hover:opacity-60" />
                     </button>
                   )}
 
-                  <span className={cn('w-18 text-right text-xs font-semibold', actual > 0 ? 'text-foreground' : 'text-muted-foreground')}>
-                    {fmt(actual)}
+                  <span className={cn('w-24 text-right text-xs font-semibold shrink-0', c.actual > 0 ? 'text-foreground' : 'text-muted-foreground')}>
+                    {fmt(c.actual)}
                   </span>
-                  <span className={cn('w-18 text-right text-xs font-bold', bal >= 0 ? 'text-warning' : 'text-success')}>
-                    {bal >= 0 ? `-${fmt(bal)}` : `+${fmt(Math.abs(bal))}`}
+                  <span className={cn(
+                    'w-24 text-right text-xs font-bold shrink-0',
+                    c.remaining < 0 ? 'text-destructive' : c.remaining < c.budget * 0.2 ? 'text-warning' : 'text-success'
+                  )}>
+                    {c.remaining >= 0 ? fmt(c.remaining) : `-${fmt(Math.abs(c.remaining))}`}
                   </span>
                 </div>
-              </div>
-            );
-          })}
-        </div>
 
-        {/* Debt total */}
-        <div className="flex items-center gap-2 px-1 pt-3 mt-2 border-t border-border/50 text-xs font-bold">
-          <span className="flex-1">Total Debt</span>
-          <span className="w-20 text-right">{fmt(debtTotalExpected)}</span>
-          <span className="w-18 text-right text-destructive">{fmt(debtTotalActual)}</span>
-          <span className={cn('w-18 text-right', debtTotalBalance >= 0 ? 'text-warning' : 'text-success')}>
-            {debtTotalBalance >= 0 ? `-${fmt(debtTotalBalance)}` : `+${fmt(Math.abs(debtTotalBalance))}`}
-          </span>
+                {/* Progress bar */}
+                <div className="mt-1.5 ml-8">
+                  <Progress
+                    value={Math.min(c.percent, 100)}
+                    className={cn(
+                      'h-1',
+                      c.overspent ? '[&>div]:bg-destructive' :
+                      c.percent >= 80 ? '[&>div]:bg-warning' :
+                      '[&>div]:bg-success'
+                    )}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Home total */}
+          <div className="flex items-center gap-3 px-2 pt-3 mt-2 border-t border-border/50 text-xs font-bold">
+            <span className="w-5 shrink-0"></span>
+            <span className="flex-1 min-w-[100px]">Total Home</span>
+            <span className="w-24 text-right shrink-0">{fmt(totalBudget)}</span>
+            <span className="w-24 text-right text-destructive shrink-0">{fmt(totalSpent)}</span>
+            <span className={cn('w-24 text-right shrink-0', totalBudget - totalSpent >= 0 ? 'text-success' : 'text-destructive')}>
+              {totalBudget - totalSpent >= 0 ? fmt(totalBudget - totalSpent) : `-${fmt(Math.abs(totalBudget - totalSpent))}`}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* DEBT EXPENSE TABLE */}
+      <div className="glass-card rounded-xl p-4 mx-2 overflow-x-auto">
+        <h2 className="text-sm font-semibold text-foreground mb-3">💳 Debt Expenses</h2>
+
+        <div className="min-w-[480px]">
+          <div className="flex items-center gap-3 text-xs text-muted-foreground px-2 mb-2 font-semibold border-b border-border/40 pb-2">
+            <span className="w-5 shrink-0"></span>
+            <span className="flex-1 min-w-[100px]">Category</span>
+            <span className="w-24 text-right shrink-0">Expected</span>
+            <span className="w-24 text-right shrink-0">Actual</span>
+            <span className="w-24 text-right shrink-0">Balance</span>
+          </div>
+
+          <div className="space-y-1">
+            {allDebtCategories.map(cat => {
+              const exp = debtExpected[cat] || 0;
+              const actual = debtActuals[cat] || 0;
+              const bal = exp - actual;
+              const over = actual > exp && exp > 0;
+              return (
+                <div key={cat} className={cn('rounded-lg px-2 py-2', over ? 'bg-destructive/8' : '')}>
+                  <div className="flex items-center gap-3">
+                    {over
+                      ? <AlertCircle className="h-3.5 w-3.5 text-destructive shrink-0" />
+                      : <CheckCircle className="h-3.5 w-3.5 text-success shrink-0 opacity-50" />
+                    }
+                    <span className="flex-1 text-xs font-medium text-foreground min-w-[100px]">{cat}</span>
+
+                    {editingDebt === cat ? (
+                      <div className="flex items-center gap-1 w-24 justify-end shrink-0">
+                        <Input
+                          type="number"
+                          className="w-20 h-6 text-xs px-1"
+                          value={editDebtValue}
+                          onChange={e => setEditDebtValue(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') handleSaveDebt(cat); if (e.key === 'Escape') setEditingDebt(null); }}
+                          autoFocus
+                        />
+                        <button onClick={() => handleSaveDebt(cat)} className="text-success"><Check className="h-3 w-3" /></button>
+                        <button onClick={() => setEditingDebt(null)} className="text-muted-foreground"><X className="h-3 w-3" /></button>
+                      </div>
+                    ) : (
+                      <button
+                        className="w-24 text-right text-xs text-muted-foreground hover:text-primary flex items-center justify-end gap-0.5 group shrink-0"
+                        onClick={() => { setEditingDebt(cat); setEditDebtValue(String(exp)); }}
+                      >
+                        {fmt(exp)}
+                        <Pencil className="h-2.5 w-2.5 opacity-0 group-hover:opacity-60" />
+                      </button>
+                    )}
+
+                    <span className={cn('w-24 text-right text-xs font-semibold shrink-0', actual > 0 ? 'text-foreground' : 'text-muted-foreground')}>
+                      {fmt(actual)}
+                    </span>
+                    <span className={cn('w-24 text-right text-xs font-bold shrink-0', bal >= 0 ? 'text-warning' : 'text-success')}>
+                      {bal >= 0 ? `-${fmt(bal)}` : `+${fmt(Math.abs(bal))}`}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Debt total */}
+          <div className="flex items-center gap-3 px-2 pt-3 mt-2 border-t border-border/50 text-xs font-bold">
+            <span className="w-5 shrink-0"></span>
+            <span className="flex-1 min-w-[100px]">Total Debt</span>
+            <span className="w-24 text-right shrink-0">{fmt(debtTotalExpected)}</span>
+            <span className="w-24 text-right text-destructive shrink-0">{fmt(debtTotalActual)}</span>
+            <span className={cn('w-24 text-right shrink-0', debtTotalBalance >= 0 ? 'text-warning' : 'text-success')}>
+              {debtTotalBalance >= 0 ? `-${fmt(debtTotalBalance)}` : `+${fmt(Math.abs(debtTotalBalance))}`}
+            </span>
+          </div>
         </div>
       </div>
 

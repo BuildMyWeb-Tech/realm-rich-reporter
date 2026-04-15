@@ -45,12 +45,34 @@ export function getBankAccounts(): Account[] {
   return ACCOUNTS.filter(a => a.type === 'bank');
 }
 
+// ── INCOME CATEGORY GROUPS ─────────────────────────────────────────────────
+
+/** Home income sources — regular/recurring household income */
+export const HOME_INCOME_CATEGORIES = [
+  'Appa Salary',
+  'Ajai Salary',
+  'Vaati',
+  'Allowance',
+  'Govt Ration Income',
+  'Ration Income',
+  'Mill SVRM Mann.',
+] as const;
+
+/** Debt / extra income sources */
+export const DEBT_INCOME_CATEGORIES = [
+  'Ajai Extra',
+  'Appa Extra Earnings',
+  'Home Extra',
+  'BMW',
+  'Extra Income - Ajai',
+  'Extra Income - Appa',
+  'Extra Income - Home',
+] as const;
+
+/** Combined list for dropdowns — home first, then debt */
 export const INCOME_CATEGORIES = [
-  'Appa Salary', 'Ajai Salary', 'Vaati', 'Allowance', 'Govt Ration Income',
-  'Ration Income', 'Mill SVRM Mann.',
-  'Ajai Extra', 'Appa Extra Earnings', 'Home Extra', 'BMW',
-  'Extra Income - Ajai', 'Extra Income - Appa', 'Extra Income - Home',
-  'Debt Income', 'Other Income',
+  ...HOME_INCOME_CATEGORIES,
+  ...DEBT_INCOME_CATEGORIES,
 ] as const;
 
 export const EXPENSE_CATEGORIES = [
@@ -67,6 +89,22 @@ export const DEBT_EXPENSE_CATEGORIES = [
 
 export type IncomeCategory = typeof INCOME_CATEGORIES[number];
 export type ExpenseCategory = typeof EXPENSE_CATEGORIES[number];
+
+// ── SETTINGS: CRUD for income/expense sources ──────────────────────────────
+
+export interface IncomeSource {
+  id: string;
+  name: string;
+  group: 'home' | 'debt';
+  defaultExpected: number;
+}
+
+export interface ExpenseSource {
+  id: string;
+  name: string;
+  group: 'home' | 'debt';
+  defaultBudget: number;
+}
 
 export interface Transaction {
   id: string;
@@ -121,6 +159,11 @@ export interface FinancialState {
   accountBalances: Record<string, number>; // accountId -> opening balance
   // Keep legacy for backward compat
   initialBalances: Record<Person, number>;
+  // Custom sources (CRUD via Settings)
+  incomeSources?: IncomeSource[];
+  expenseSources?: ExpenseSource[];
+  // Custom account display names
+  accountNames?: Record<string, string>; // accountId -> custom display name
 }
 
 export const MONTH_NAMES = [
@@ -148,6 +191,11 @@ export const DEFAULT_EXPECTED_INCOME: Record<string, number> = {
   'Appa Extra Earnings': 0,
   'Home Extra': 0,
   'BMW': 5000,
+  'Extra Income - Ajai': 0,
+  'Extra Income - Appa': 0,
+  'Extra Income - Home': 0,
+  'Debt Income': 0,
+  'Other Income': 0,
 };
 
 // Expected debt expense amounts (default)

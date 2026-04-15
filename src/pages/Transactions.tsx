@@ -7,6 +7,16 @@ import TransactionForm from '@/components/TransactionForm';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Trash2, Search, Pencil, Copy, X, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -18,6 +28,9 @@ export default function Transactions() {
   const [filterType, setFilterType] = useState('all');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editFields, setEditFields] = useState<Partial<Transaction>>({});
+
+  // Delete confirmation state
+  const [deleteTarget, setDeleteTarget] = useState<Transaction | null>(null);
 
   const txns = useMemo(() => {
     let list = getMonthTransactions(state.transactions, selectedYear, selectedMonth);
@@ -31,9 +44,15 @@ export default function Transactions() {
     return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [state.transactions, selectedYear, selectedMonth, filterPerson, filterType, search]);
 
-  const handleDelete = (id: string) => {
-    deleteTransaction(id);
+  const confirmDelete = (t: Transaction) => {
+    setDeleteTarget(t);
+  };
+
+  const handleDeleteConfirmed = () => {
+    if (!deleteTarget) return;
+    deleteTransaction(deleteTarget.id);
     toast.success('Transaction deleted');
+    setDeleteTarget(null);
   };
 
   const handleEdit = (t: Transaction) => {
@@ -218,7 +237,7 @@ export default function Transactions() {
                     </Button>
                     <Button
                       variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                      onClick={() => handleDelete(t.id)}
+                      onClick={() => confirmDelete(t)}
                       title="Delete"
                     >
                       <Trash2 className="h-3 w-3" />
@@ -230,6 +249,59 @@ export default function Transactions() {
           ))
         )}
       </div>
+
+      {/* ── DELETE CONFIRMATION DIALOG ── */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={open => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Transaction?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>This action cannot be undone.</p>
+                {deleteTarget && (
+                  <div className="rounded-lg bg-muted/50 px-3 py-2 text-sm space-y-1">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Category</span>
+                      <span className="font-medium">{deleteTarget.category}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Amount</span>
+                      <span className={cn('font-semibold', deleteTarget.type === 'income' ? 'text-success' : 'text-destructive')}>
+                        {deleteTarget.type === 'income' ? '+' : '-'}{fmt(deleteTarget.amount)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Person</span>
+                      <span className="font-medium">{deleteTarget.person}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Date</span>
+                      <span className="font-medium">
+                        {new Date(deleteTarget.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      </span>
+                    </div>
+                    {deleteTarget.notes && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Notes</span>
+                        <span className="font-medium truncate max-w-[160px]">{deleteTarget.notes}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteTarget(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirmed}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <TransactionForm />
     </div>

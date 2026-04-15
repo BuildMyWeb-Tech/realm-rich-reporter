@@ -1,11 +1,11 @@
 C:\Users\ajaik\Desktop\realm-rich-reporter>node show-structure.js
 📄 .env
-📁 .git
-📄 .gitignore
+📁 .git📄 .gitignore
 📄 bun.lock
 📄 bun.lockb
 📄 components.json
 📄 eslint.config.js
+📄 folder.txt
 📄 index.html
 📄 package-lock.json
 📄 package.json
@@ -91,6 +91,7 @@ C:\Users\ajaik\Desktop\realm-rich-reporter>node show-structure.js
    📁 pages
       📄 BudgetPage.tsx
       📄 Dashboard.tsx
+      📄 IncomePage.tsx
       📄 Index.tsx
       📄 LoginPage.tsx
       📄 NotFound.tsx
