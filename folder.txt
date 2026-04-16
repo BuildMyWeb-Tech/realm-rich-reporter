@@ -23,6 +23,8 @@ C:\Users\ajaik\Desktop\realm-rich-reporter>node show-structure.js
       📄 BottomNav.tsx
       📄 MonthSelector.tsx
       📄 NavLink.tsx
+      📄 OverspendAnalytics.tsx
+      📄 RecurringManager.tsx
       📄 TransactionForm.tsx
       📁 ui
          📄 accordion.tsx
@@ -83,6 +85,7 @@ C:\Users\ajaik\Desktop\realm-rich-reporter>node show-structure.js
    📄 index.css
    📁 lib
       📄 financial-store.ts
+      📄 recurring-engine.ts
       📄 supabase-store.ts
       📄 supabase.ts
       📄 types.ts
@@ -95,6 +98,7 @@ C:\Users\ajaik\Desktop\realm-rich-reporter>node show-structure.js
       📄 Index.tsx
       📄 LoginPage.tsx
       📄 NotFound.tsx
+      📄 PersonWisePage.tsx
       📄 Reports.tsx
       📄 SettingsPage.tsx
       📄 Transactions.tsx
