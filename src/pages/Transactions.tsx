@@ -287,7 +287,9 @@ export default function Transactions() {
                 {t.type === 'transfer' ? '↔' : t.type === 'income' ? '↑' : '↓'}
               </div>
               <div className="min-w-0">
-                <p className="text-sm font-medium truncate">
+
+                <p className="text-sm truncate">
+                  {t.notes && <p className="text-muted-foreground font-medium truncate">{t.notes}</p>}
                   {t.category}
                   {t.type === 'transfer' && t.transferTo ? ` → ${t.transferTo}` : ''}
                   {t.homeOrDebt === 'debt' && <span className="ml-1 text-[10px] bg-warning/20 text-warning rounded px-1 py-0.5">DEBT</span>}
@@ -295,7 +297,6 @@ export default function Transactions() {
                 <p className="text-xs text-muted-foreground">
                   {t.person} · {new Date(t.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} · {t.paymentMode}
                 </p>
-                {t.notes && <p className="text-xs text-muted-foreground truncate">{t.notes}</p>}
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">

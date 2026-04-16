@@ -47,10 +47,10 @@ export default function Dashboard() {
       {/* Stats Grid */}
       <div className="grid grid-cols-2 gap-3">
         {[
-          { label: 'Balance', value: totals.closing, icon: Wallet, color: 'gradient-primary' },
           { label: 'Income', value: totals.income, icon: TrendingUp, color: 'bg-success' },
           { label: 'Expenses', value: totals.expense, icon: TrendingDown, color: 'gradient-danger' },
-          { label: 'Savings', value: totals.savings, icon: PiggyBank, color: 'gradient-accent' },
+          { label: 'Balance', value: totals.closing, icon: Wallet, color: 'gradient-primary' },
+          // { label: 'Savings', value: totals.savings, icon: PiggyBank, color: 'gradient-accent' },
         ].map(s => (
           <div key={s.label} className={cn('stat-card rounded-xl text-primary-foreground', s.color)}>
             <div className="flex items-center gap-2 mb-1"><s.icon className="h-4 w-4 opacity-80" /><span className="text-xs opacity-90">{s.label}</span></div>
