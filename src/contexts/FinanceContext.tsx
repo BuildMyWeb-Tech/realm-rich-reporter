@@ -1,16 +1,5 @@
-/**
- * FinanceContext.tsx — UPGRADED with Supabase sync
- *
- * Changes from original:
- * - loadState() → loads from Supabase on mount, falls back to localStorage
- * - Every mutation also writes to Supabase in the background
- * - localStorage is still updated (offline fallback)
- * - Added `isLoading` and `isSyncing` flags for UI feedback
- * - Added `migrateData` for one-time localStorage → Supabase migration
- */
-
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { Transaction, Budget, RecurringEntry, FinancialState, Person } from '@/lib/types';
+import { Transaction, Budget, RecurringEntry, FinancialState, Person, IncomeSource, ExpenseSource } from '@/lib/types';
 import { generateId } from '@/lib/financial-store';
 import {
   loadLocalState,
@@ -25,6 +14,11 @@ import {
   migrateLocalToSupabase,
 } from '@/lib/supabase-store';
 
+export interface MissingMoneyEntry {
+  date: string; // YYYY-MM-DD
+  amount: number;
+}
+
 interface FinanceContextType {
   state: FinancialState;
   isLoading: boolean;
@@ -37,6 +31,13 @@ interface FinanceContextType {
   deleteRecurring: (id: string) => Promise<void>;
   setInitialBalance: (person: Person, amount: number) => Promise<void>;
   setAccountBalance: (accountId: string, amount: number) => Promise<void>;
+  // Settings CRUD — persists to state + localStorage + Supabase
+  setIncomeSources: (sources: IncomeSource[]) => Promise<void>;
+  setExpenseSources: (sources: ExpenseSource[]) => Promise<void>;
+  setAccountNames: (names: Record<string, string>) => Promise<void>;
+  // Missing money log
+  missingMoneyLog: MissingMoneyEntry[];
+  logMissingMoney: (date: string, amount: number) => void;
   migrateData: () => Promise<{ success: boolean; message: string }>;
   refreshFromCloud: () => Promise<void>;
   selectedYear: number;
@@ -47,17 +48,30 @@ interface FinanceContextType {
 
 const FinanceContext = createContext<FinanceContextType | null>(null);
 
+// Missing money log is stored separately in localStorage
+const MISSING_LOG_KEY = 'family-finance-missing-log';
+
+function loadMissingLog(): MissingMoneyEntry[] {
+  try {
+    const raw = localStorage.getItem(MISSING_LOG_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveMissingLog(log: MissingMoneyEntry[]) {
+  localStorage.setItem(MISSING_LOG_KEY, JSON.stringify(log));
+}
+
 export function FinanceProvider({ children }: { children: React.ReactNode }) {
-  // Start with local state immediately (no flash of empty)
   const [state, setState] = useState<FinancialState>(loadLocalState);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [missingMoneyLog, setMissingMoneyLog] = useState<MissingMoneyEntry[]>(loadMissingLog);
 
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth());
 
-  // On mount — load fresh data from Supabase
   useEffect(() => {
     (async () => {
       setIsLoading(true);
@@ -67,7 +81,6 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
-  // Keep localStorage in sync as a cache
   useEffect(() => {
     if (!isLoading) saveLocalState(state);
   }, [state, isLoading]);
@@ -76,9 +89,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
 
   const addTransaction = useCallback(async (txn: Omit<Transaction, 'id'>) => {
     const newTxn: Transaction = { ...txn, id: generateId() };
-    // Update local immediately
     setState(s => ({ ...s, transactions: [...s.transactions, newTxn] }));
-    // Sync to cloud in background
     setIsSyncing(true);
     await saveTransaction(newTxn);
     setIsSyncing(false);
@@ -151,6 +162,53 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  // ─── SETTINGS CRUD ────────────────────────────────────────────────────────
+  // These write directly to state so all pages pick up changes without refresh
+
+  const setIncomeSources = useCallback(async (sources: IncomeSource[]) => {
+    setState(s => {
+      const updated = { ...s, incomeSources: sources };
+      saveConfig('incomeSources', sources);
+      return updated;
+    });
+  }, []);
+
+  const setExpenseSources = useCallback(async (sources: ExpenseSource[]) => {
+    setState(s => {
+      const updated = { ...s, expenseSources: sources };
+      saveConfig('expenseSources', sources);
+      return updated;
+    });
+  }, []);
+
+  const setAccountNames = useCallback(async (names: Record<string, string>) => {
+    setState(s => {
+      const updated = { ...s, accountNames: names };
+      saveConfig('accountNames', names);
+      return updated;
+    });
+  }, []);
+
+  // ─── MISSING MONEY LOG ────────────────────────────────────────────────────
+
+  const logMissingMoney = useCallback((date: string, amount: number) => {
+    setMissingMoneyLog(prev => {
+      // Update or insert entry for this date
+      const existing = prev.findIndex(e => e.date === date);
+      let updated: MissingMoneyEntry[];
+      if (amount === 0) {
+        // Remove zero entries
+        updated = prev.filter(e => e.date !== date);
+      } else if (existing >= 0) {
+        updated = prev.map(e => e.date === date ? { date, amount } : e);
+      } else {
+        updated = [...prev, { date, amount }].sort((a, b) => a.date.localeCompare(b.date));
+      }
+      saveMissingLog(updated);
+      return updated;
+    });
+  }, []);
+
   // ─── MIGRATION & REFRESH ──────────────────────────────────────────────────
 
   const migrateData = useCallback(async () => {
@@ -170,6 +228,8 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       addTransaction, deleteTransaction, updateTransaction,
       setBudget, addRecurring, deleteRecurring,
       setInitialBalance, setAccountBalance,
+      setIncomeSources, setExpenseSources, setAccountNames,
+      missingMoneyLog, logMissingMoney,
       migrateData, refreshFromCloud,
       selectedYear, selectedMonth, setSelectedYear, setSelectedMonth,
     }}>

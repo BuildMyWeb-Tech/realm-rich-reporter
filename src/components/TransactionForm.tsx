@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { useFinance } from '@/contexts/FinanceContext';
-import { PERSONS, INCOME_CATEGORIES, EXPENSE_CATEGORIES, DEBT_EXPENSE_CATEGORIES, ACCOUNTS, TransactionType, PaymentMode, Person, HomeOrDebt } from '@/lib/types';
+import {
+  PERSONS, HOME_INCOME_CATEGORIES, DEBT_INCOME_CATEGORIES,
+  EXPENSE_CATEGORIES, DEBT_EXPENSE_CATEGORIES, ACCOUNTS,
+  TransactionType, PaymentMode, Person, HomeOrDebt,
+} from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,7 +14,7 @@ import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function TransactionForm({ onSuccess }: { onSuccess?: () => void }) {
-  const { addTransaction } = useFinance();
+  const { addTransaction, state } = useFinance();
   const [open, setOpen] = useState(false);
   const today = new Date().toISOString().split('T')[0];
   const [form, setForm] = useState({
@@ -28,10 +32,31 @@ export default function TransactionForm({ onSuccess }: { onSuccess?: () => void 
     homeOrDebt: 'home' as HomeOrDebt,
   });
 
-  const categories = form.type === 'income'
-    ? INCOME_CATEGORIES
+  // Build category lists including custom sources from Settings
+  const customIncomeSources = state.incomeSources || [];
+  const customExpenseSources = state.expenseSources || [];
+
+  const homeIncomeCategories = [
+    ...HOME_INCOME_CATEGORIES,
+    ...customIncomeSources.filter(s => s.group === 'home').map(s => s.name),
+  ];
+  const debtIncomeCategories = [
+    ...DEBT_INCOME_CATEGORIES,
+    ...customIncomeSources.filter(s => s.group === 'debt').map(s => s.name),
+  ];
+  const homeExpenseCategories = [
+    ...EXPENSE_CATEGORIES,
+    ...customExpenseSources.filter(s => s.group === 'home').map(s => s.name),
+  ];
+  const debtExpenseCategories = [
+    ...DEBT_EXPENSE_CATEGORIES,
+    ...customExpenseSources.filter(s => s.group === 'debt').map(s => s.name),
+  ];
+
+  const categories: string[] = form.type === 'income'
+    ? (form.homeOrDebt === 'home' ? homeIncomeCategories : debtIncomeCategories)
     : form.type === 'expense'
-      ? (form.homeOrDebt === 'debt' ? DEBT_EXPENSE_CATEGORIES : EXPENSE_CATEGORIES)
+      ? (form.homeOrDebt === 'debt' ? debtExpenseCategories : homeExpenseCategories)
       : [];
 
   const personAccounts = form.person
@@ -44,20 +69,16 @@ export default function TransactionForm({ onSuccess }: { onSuccess?: () => void 
 
   const handleSubmit = () => {
     if (!form.person || !form.amount || Number(form.amount) <= 0) {
-      toast.error('Please fill required fields');
-      return;
+      toast.error('Please fill required fields'); return;
     }
     if (form.type !== 'transfer' && !form.category) {
-      toast.error('Please select a category');
-      return;
+      toast.error('Please select a category'); return;
     }
     if (form.type === 'transfer' && !form.transferTo) {
-      toast.error('Please select transfer recipient');
-      return;
+      toast.error('Please select transfer recipient'); return;
     }
     if (form.type === 'transfer' && form.transferTo === form.person) {
-      toast.error('Cannot transfer to same person');
-      return;
+      toast.error('Cannot transfer to same person'); return;
     }
 
     const d = new Date(form.date);
@@ -121,7 +142,7 @@ export default function TransactionForm({ onSuccess }: { onSuccess?: () => void 
                 onClick={() => setForm(f => ({ ...f, homeOrDebt: hd, category: '' }))}
                 className="capitalize"
               >
-                {hd}
+                {hd === 'home' ? '🏠 Home' : '💳 Debt'}
               </Button>
             ))}
           </div>
@@ -152,7 +173,6 @@ export default function TransactionForm({ onSuccess }: { onSuccess?: () => void 
             </Select>
           </div>
 
-          {/* Account selector */}
           {form.person && personAccounts.length > 0 && (
             <div>
               <Label>Account</Label>
@@ -199,6 +219,17 @@ export default function TransactionForm({ onSuccess }: { onSuccess?: () => void 
               </Select>
             </div>
           )}
+
+          <div>
+            <Label>Payment Mode</Label>
+            <Select value={form.paymentMode} onValueChange={v => setForm(f => ({ ...f, paymentMode: v as PaymentMode }))}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="cash">Cash</SelectItem>
+                <SelectItem value="bank">Bank</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
 
           <div>
             <Label>Notes</Label>

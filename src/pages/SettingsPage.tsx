@@ -18,12 +18,10 @@ import {
 import { toast } from 'sonner';
 import { Download, Plus, Trash2, Pencil, Check, X, ChevronDown, ChevronUp } from 'lucide-react';
 
-// Helper to generate simple IDs
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
 }
 
-// ── Collapsible section wrapper ──────────────────────────────────────────────
 function Section({ title, children, defaultOpen = false }: {
   title: string; children: React.ReactNode; defaultOpen?: boolean;
 }) {
@@ -43,19 +41,23 @@ function Section({ title, children, defaultOpen = false }: {
 }
 
 export default function SettingsPage() {
-  const { state, setInitialBalance, setAccountBalance, addRecurring, deleteRecurring, updateTransaction } = useFinance();
+  const {
+    state,
+    setInitialBalance, setAccountBalance,
+    addRecurring, deleteRecurring,
+    setIncomeSources, setExpenseSources, setAccountNames,
+  } = useFinance();
+
   const [balances, setBalances] = useState(state.initialBalances);
   const [acctBalances, setAcctBalances] = useState(state.accountBalances || {});
 
-  // Account custom names
-  const [accountNames, setAccountNames] = useState<Record<string, string>>(
-    state.accountNames || {}
-  );
+  // Account names — driven by context state
+  const accountNames = state.accountNames || {};
   const [editingAcct, setEditingAcct] = useState<string | null>(null);
   const [editAcctName, setEditAcctName] = useState('');
 
-  // Income Sources CRUD
-  const [incomeSources, setIncomeSources] = useState<IncomeSource[]>(state.incomeSources || []);
+  // Income Sources — driven by context state
+  const incomeSources: IncomeSource[] = state.incomeSources || [];
   const [newIncomeName, setNewIncomeName] = useState('');
   const [newIncomeGroup, setNewIncomeGroup] = useState<'home' | 'debt'>('home');
   const [newIncomeExpected, setNewIncomeExpected] = useState('');
@@ -63,8 +65,8 @@ export default function SettingsPage() {
   const [editIncomeFields, setEditIncomeFields] = useState<Partial<IncomeSource>>({});
   const [deleteIncomeTarget, setDeleteIncomeTarget] = useState<IncomeSource | null>(null);
 
-  // Expense Sources CRUD
-  const [expenseSources, setExpenseSources] = useState<ExpenseSource[]>(state.expenseSources || []);
+  // Expense Sources — driven by context state
+  const expenseSources: ExpenseSource[] = state.expenseSources || [];
   const [newExpenseName, setNewExpenseName] = useState('');
   const [newExpenseGroup, setNewExpenseGroup] = useState<'home' | 'debt'>('home');
   const [newExpenseBudget, setNewExpenseBudget] = useState('');
@@ -80,43 +82,6 @@ export default function SettingsPage() {
   });
   const [deleteRecurringTarget, setDeleteRecurringTarget] = useState<string | null>(null);
 
-  // ── Persist helpers (write back to FinancialState via localStorage directly until context supports it) ──
-  const persistIncomeSources = (sources: IncomeSource[]) => {
-    setIncomeSources(sources);
-    try {
-      const raw = localStorage.getItem('family-finance-data');
-      if (raw) {
-        const data = JSON.parse(raw);
-        data.incomeSources = sources;
-        localStorage.setItem('family-finance-data', JSON.stringify(data));
-      }
-    } catch { /* ignore */ }
-  };
-
-  const persistExpenseSources = (sources: ExpenseSource[]) => {
-    setExpenseSources(sources);
-    try {
-      const raw = localStorage.getItem('family-finance-data');
-      if (raw) {
-        const data = JSON.parse(raw);
-        data.expenseSources = sources;
-        localStorage.setItem('family-finance-data', JSON.stringify(data));
-      }
-    } catch { /* ignore */ }
-  };
-
-  const persistAccountNames = (names: Record<string, string>) => {
-    setAccountNames(names);
-    try {
-      const raw = localStorage.getItem('family-finance-data');
-      if (raw) {
-        const data = JSON.parse(raw);
-        data.accountNames = names;
-        localStorage.setItem('family-finance-data', JSON.stringify(data));
-      }
-    } catch { /* ignore */ }
-  };
-
   // ── Save balances ─────────────────────────────────────────────────────────
   const saveBalances = () => {
     PERSONS.forEach(p => setInitialBalance(p, balances[p] || 0));
@@ -126,74 +91,80 @@ export default function SettingsPage() {
 
   // ── Account rename ────────────────────────────────────────────────────────
   const saveAcctName = (id: string) => {
-    const updated = { ...accountNames, [id]: editAcctName.trim() || ACCOUNTS.find(a => a.id === id)?.name || id };
-    persistAccountNames(updated);
+    const updated = {
+      ...accountNames,
+      [id]: editAcctName.trim() || ACCOUNTS.find(a => a.id === id)?.name || id,
+    };
+    setAccountNames(updated);
     setEditingAcct(null);
     toast.success('Account name updated');
   };
 
-  // ── Income Sources ────────────────────────────────────────────────────────
+  const getAcctDisplayName = (id: string) =>
+    accountNames[id] || ACCOUNTS.find(a => a.id === id)?.name || id;
+
+  // ── Income Sources ─────────────────────────────────────────────────────────
+
   const addIncomeSource = () => {
     if (!newIncomeName.trim()) { toast.error('Enter a source name'); return; }
-    const all = [...HOME_INCOME_CATEGORIES as readonly string[], ...DEBT_INCOME_CATEGORIES as readonly string[]];
-    if (all.includes(newIncomeName.trim()) || incomeSources.some(s => s.name === newIncomeName.trim())) {
-      toast.error('Source already exists');
-      return;
+    const builtIn = [...HOME_INCOME_CATEGORIES as readonly string[], ...DEBT_INCOME_CATEGORIES as readonly string[]];
+    if (builtIn.includes(newIncomeName.trim()) || incomeSources.some(s => s.name === newIncomeName.trim())) {
+      toast.error('Source already exists'); return;
     }
-    const updated = [...incomeSources, {
+    const updated: IncomeSource[] = [...incomeSources, {
       id: uid(),
       name: newIncomeName.trim(),
       group: newIncomeGroup,
       defaultExpected: Number(newIncomeExpected) || 0,
     }];
-    persistIncomeSources(updated);
+    setIncomeSources(updated);
     setNewIncomeName(''); setNewIncomeExpected('');
-    toast.success('Income source added');
+    toast.success('Income source added — visible in Income page immediately');
   };
 
   const saveIncomeEdit = (id: string) => {
     const updated = incomeSources.map(s => s.id === id ? { ...s, ...editIncomeFields } : s);
-    persistIncomeSources(updated);
+    setIncomeSources(updated);
     setEditingIncomeId(null);
     toast.success('Income source updated');
   };
 
   const deleteIncome = (source: IncomeSource) => {
     const updated = incomeSources.filter(s => s.id !== source.id);
-    persistIncomeSources(updated);
+    setIncomeSources(updated);
     setDeleteIncomeTarget(null);
     toast.success('Income source deleted');
   };
 
   // ── Expense Sources ───────────────────────────────────────────────────────
+
   const addExpenseSource = () => {
     if (!newExpenseName.trim()) { toast.error('Enter a source name'); return; }
-    const all = [...EXPENSE_CATEGORIES as readonly string[], ...DEBT_EXPENSE_CATEGORIES as readonly string[]];
-    if (all.includes(newExpenseName.trim()) || expenseSources.some(s => s.name === newExpenseName.trim())) {
-      toast.error('Source already exists');
-      return;
+    const builtIn = [...EXPENSE_CATEGORIES as readonly string[], ...DEBT_EXPENSE_CATEGORIES as readonly string[]];
+    if (builtIn.includes(newExpenseName.trim()) || expenseSources.some(s => s.name === newExpenseName.trim())) {
+      toast.error('Source already exists'); return;
     }
-    const updated = [...expenseSources, {
+    const updated: ExpenseSource[] = [...expenseSources, {
       id: uid(),
       name: newExpenseName.trim(),
       group: newExpenseGroup,
       defaultBudget: Number(newExpenseBudget) || 0,
     }];
-    persistExpenseSources(updated);
+    setExpenseSources(updated);
     setNewExpenseName(''); setNewExpenseBudget('');
-    toast.success('Expense source added');
+    toast.success('Expense source added — visible in Expenses page immediately');
   };
 
   const saveExpenseEdit = (id: string) => {
     const updated = expenseSources.map(s => s.id === id ? { ...s, ...editExpenseFields } : s);
-    persistExpenseSources(updated);
+    setExpenseSources(updated);
     setEditingExpenseId(null);
     toast.success('Expense source updated');
   };
 
   const deleteExpense = (source: ExpenseSource) => {
     const updated = expenseSources.filter(s => s.id !== source.id);
-    persistExpenseSources(updated);
+    setExpenseSources(updated);
     setDeleteExpenseTarget(null);
     toast.success('Expense source deleted');
   };
@@ -201,8 +172,7 @@ export default function SettingsPage() {
   // ── Recurring ─────────────────────────────────────────────────────────────
   const addRec = () => {
     if (!recForm.person || !recForm.category || !recForm.amount) {
-      toast.error('Fill all fields');
-      return;
+      toast.error('Fill all fields'); return;
     }
     addRecurring({
       person: recForm.person as Person,
@@ -239,23 +209,18 @@ export default function SettingsPage() {
         localStorage.setItem('family-finance-data', JSON.stringify(data));
         toast.success('Data imported — refreshing...');
         setTimeout(() => window.location.reload(), 1000);
-      } catch {
-        toast.error('Invalid file');
-      }
+      } catch { toast.error('Invalid file'); }
     };
     reader.readAsText(file);
   };
 
   const categories = recForm.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
-  const getAcctDisplayName = (id: string) => accountNames[id] || ACCOUNTS.find(a => a.id === id)?.name || id;
-
-  const groupLabel = (g: 'home' | 'debt') => g === 'home' ? '🏠 Home' : '💳 Debt';
 
   return (
     <div className="pb-20 px-4 pt-4 max-w-lg mx-auto space-y-4 animate-slide-up">
       <h1 className="text-xl font-bold text-foreground">Settings</h1>
 
-      {/* ── ACCOUNT BALANCES ──────────────────────────────────────────── */}
+      {/* ── ACCOUNT BALANCES ─────────────────────────────────────── */}
       <Section title="Account Opening Balances" defaultOpen>
         <div className="space-y-2 mt-1">
           {ACCOUNTS.map(acc => (
@@ -274,7 +239,7 @@ export default function SettingsPage() {
         </div>
       </Section>
 
-      {/* ── ACCOUNT NAMES CRUD ────────────────────────────────────────── */}
+      {/* ── ACCOUNT NAMES CRUD ───────────────────────────────────── */}
       <Section title="Account Names (Rename)">
         <div className="space-y-1.5 mt-1">
           {ACCOUNTS.map(acc => (
@@ -311,29 +276,25 @@ export default function SettingsPage() {
         </div>
       </Section>
 
-      {/* ── INCOME SOURCES CRUD ───────────────────────────────────────── */}
+      {/* ── INCOME SOURCES CRUD ──────────────────────────────────── */}
       <Section title="Income Sources (CRUD)">
         <div className="space-y-1 mt-2">
-
-          {/* Built-in home */}
           <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mt-2 mb-1">🏠 Built-in Home Income</p>
           {HOME_INCOME_CATEGORIES.map(cat => (
             <div key={cat} className="flex items-center gap-2 py-1.5 px-2 rounded-lg bg-muted/20 text-xs">
               <span className="flex-1">{cat}</span>
-              <span className="text-[10px] text-muted-foreground">Built-in</span>
+              <span className="text-[10px] text-muted-foreground bg-success/10 text-success px-1.5 py-0.5 rounded-full">Home · Built-in</span>
             </div>
           ))}
 
-          {/* Built-in debt */}
           <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mt-3 mb-1">💳 Built-in Debt Income</p>
           {DEBT_INCOME_CATEGORIES.map(cat => (
             <div key={cat} className="flex items-center gap-2 py-1.5 px-2 rounded-lg bg-muted/20 text-xs">
               <span className="flex-1">{cat}</span>
-              <span className="text-[10px] text-muted-foreground">Built-in</span>
+              <span className="text-[10px] bg-warning/10 text-warning px-1.5 py-0.5 rounded-full">Debt · Built-in</span>
             </div>
           ))}
 
-          {/* Custom sources */}
           {incomeSources.length > 0 && (
             <>
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mt-3 mb-1">✏️ Custom Sources</p>
@@ -393,11 +354,10 @@ export default function SettingsPage() {
             </>
           )}
 
-          {/* Add new income source */}
           <div className="mt-3 pt-3 border-t border-border/40 space-y-2">
             <p className="text-xs font-semibold text-foreground">Add New Income Source</p>
             <Input
-              placeholder="Source name"
+              placeholder="Source name (e.g. Hari)"
               value={newIncomeName}
               onChange={e => setNewIncomeName(e.target.value)}
               className="text-sm"
@@ -425,29 +385,25 @@ export default function SettingsPage() {
         </div>
       </Section>
 
-      {/* ── EXPENSE SOURCES CRUD ──────────────────────────────────────── */}
+      {/* ── EXPENSE SOURCES CRUD ─────────────────────────────────── */}
       <Section title="Expense Sources (CRUD)">
         <div className="space-y-1 mt-2">
-
-          {/* Built-in home */}
           <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mt-2 mb-1">🏠 Built-in Home Expenses</p>
           {EXPENSE_CATEGORIES.map(cat => (
             <div key={cat} className="flex items-center gap-2 py-1.5 px-2 rounded-lg bg-muted/20 text-xs">
               <span className="flex-1">{cat}</span>
-              <span className="text-[10px] text-muted-foreground">Built-in</span>
+              <span className="text-[10px] bg-success/10 text-success px-1.5 py-0.5 rounded-full">Home · Built-in</span>
             </div>
           ))}
 
-          {/* Built-in debt */}
           <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mt-3 mb-1">💳 Built-in Debt Expenses</p>
           {DEBT_EXPENSE_CATEGORIES.map(cat => (
             <div key={cat} className="flex items-center gap-2 py-1.5 px-2 rounded-lg bg-muted/20 text-xs">
               <span className="flex-1">{cat}</span>
-              <span className="text-[10px] text-muted-foreground">Built-in</span>
+              <span className="text-[10px] bg-warning/10 text-warning px-1.5 py-0.5 rounded-full">Debt · Built-in</span>
             </div>
           ))}
 
-          {/* Custom sources */}
           {expenseSources.length > 0 && (
             <>
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mt-3 mb-1">✏️ Custom Expense Sources</p>
@@ -507,7 +463,6 @@ export default function SettingsPage() {
             </>
           )}
 
-          {/* Add new expense source */}
           <div className="mt-3 pt-3 border-t border-border/40 space-y-2">
             <p className="text-xs font-semibold text-foreground">Add New Expense Source</p>
             <Input
@@ -539,7 +494,7 @@ export default function SettingsPage() {
         </div>
       </Section>
 
-      {/* ── RECURRING ENTRIES ─────────────────────────────────────────── */}
+      {/* ── RECURRING ENTRIES ────────────────────────────────────── */}
       <Section title="Recurring Entries">
         {state.recurringEntries.length > 0 && (
           <div className="space-y-2 mb-4 mt-2">
@@ -560,7 +515,6 @@ export default function SettingsPage() {
             ))}
           </div>
         )}
-
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-2">
             <Select value={recForm.person} onValueChange={v => setRecForm(f => ({ ...f, person: v }))}>
@@ -587,7 +541,7 @@ export default function SettingsPage() {
         </div>
       </Section>
 
-      {/* ── DATA MANAGEMENT ───────────────────────────────────────────── */}
+      {/* ── DATA MANAGEMENT ──────────────────────────────────────── */}
       <Section title="Data Management">
         <div className="flex gap-2 mt-2">
           <Button onClick={exportData} variant="outline" className="flex-1" size="sm">
@@ -602,67 +556,49 @@ export default function SettingsPage() {
         </div>
       </Section>
 
-      {/* ── DELETE CONFIRMATIONS ──────────────────────────────────────── */}
-
-      {/* Delete income source */}
+      {/* ── DELETE CONFIRMATIONS ─────────────────────────────────── */}
       <AlertDialog open={!!deleteIncomeTarget} onOpenChange={o => { if (!o) setDeleteIncomeTarget(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Income Source?</AlertDialogTitle>
             <AlertDialogDescription>
-              Remove <strong>{deleteIncomeTarget?.name}</strong> ({deleteIncomeTarget?.group}) from custom income sources? This won't delete existing transactions.
+              Remove <strong>{deleteIncomeTarget?.name}</strong> from custom income sources? Existing transactions are not affected.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => deleteIncomeTarget && deleteIncome(deleteIncomeTarget)}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Delete
-            </AlertDialogAction>
+            <AlertDialogAction onClick={() => deleteIncomeTarget && deleteIncome(deleteIncomeTarget)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Delete expense source */}
       <AlertDialog open={!!deleteExpenseTarget} onOpenChange={o => { if (!o) setDeleteExpenseTarget(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Expense Source?</AlertDialogTitle>
             <AlertDialogDescription>
-              Remove <strong>{deleteExpenseTarget?.name}</strong> ({deleteExpenseTarget?.group}) from custom expense sources? This won't delete existing transactions.
+              Remove <strong>{deleteExpenseTarget?.name}</strong> from custom expense sources? Existing transactions are not affected.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => deleteExpenseTarget && deleteExpense(deleteExpenseTarget)}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Delete
-            </AlertDialogAction>
+            <AlertDialogAction onClick={() => deleteExpenseTarget && deleteExpense(deleteExpenseTarget)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Delete recurring */}
       <AlertDialog open={!!deleteRecurringTarget} onOpenChange={o => { if (!o) setDeleteRecurringTarget(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove Recurring Entry?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This recurring entry will be removed. Existing transactions are not affected.
-            </AlertDialogDescription>
+            <AlertDialogDescription>Existing transactions are not affected.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => { if (deleteRecurringTarget) { deleteRecurring(deleteRecurringTarget); setDeleteRecurringTarget(null); toast.success('Removed'); } }}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Remove
-            </AlertDialogAction>
+            >Remove</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
