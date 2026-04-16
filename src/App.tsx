@@ -20,6 +20,7 @@ import SettingsPage from "./pages/SettingsPage";
 import PersonWisePage from "./pages/PersonWisePage";
 import NotFound from "./pages/NotFound";
 import LoginPage from "./pages/LoginPage";
+import BulkUploadPage from "./pages/BulkUploadPage";
 
 const queryClient = new QueryClient();
 
@@ -93,6 +94,7 @@ function AppContent() {
         <Route path="/reports" element={<Reports />} />
         <Route path="/persons" element={<PersonWisePage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/bulk-upload" element={<BulkUploadPage />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
       <BottomNav />
