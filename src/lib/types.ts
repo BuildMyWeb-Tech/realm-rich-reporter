@@ -64,9 +64,6 @@ export const DEBT_INCOME_CATEGORIES = [
   'Appa Extra Earnings',
   'Home Extra',
   'BMW',
-  'Extra Income - Ajai',
-  'Extra Income - Appa',
-  'Extra Income - Home',
 ] as const;
 
 /** Combined list for dropdowns — home first, then debt */
@@ -83,7 +80,7 @@ export const EXPENSE_CATEGORIES = [
 ] as const;
 
 export const DEBT_EXPENSE_CATEGORIES = [
-  'Loan Repaid', 'Appa Ayyapan Kovil', 'Kannan Mama', 'Rajana Athai',
+  'Loan Repaid', 'Kannan Mama', 
   'Other Debt Expense',
 ] as const;
 
@@ -172,35 +169,32 @@ export const MONTH_NAMES = [
 ];
 
 export const DEFAULT_BUDGETS: Record<string, number> = {
-  'Rent': 5000, 'Milk': 2000, 'Rice': 1500, 'Cylinder': 1000, 'EB': 1000,
-  'Mangal': 500, 'Medicine': 1500, 'Vegetables': 3000, 'Grocery': 3000,
-  'Snacks': 1000, 'Petrol': 2000, 'Cable': 500, 'Recharge': 1000,
-  'Hotel/Food': 2000, 'Non Veg': 1500, 'Ration': 1000, 'Maavu': 500, 'Others': 2000,
+  'Rent': 5000, 'Milk': 2000, 'Rice': 1500, 'Cylinder': 950, 'EB': 500,
+  'Mangal': 2000, 'Medicine': 3500, 'Vegetables': 2000, 'Grocery': 4000,
+  'Snacks': 1500, 'Petrol': 3000, 'Cable': 280, 'Recharge': 1300,
+  'Hotel/Food': 1000, 'Non Veg': 200, 'Ration': 120, 'Maavu': 150, 'Others': 430,
 };
 
 // Expected income amounts (default)
 export const DEFAULT_EXPECTED_INCOME: Record<string, number> = {
-  'Appa Salary': 10000,
+  'Appa Salary': 10200,
   'Ajai Salary': 15000,
-  'Vaati': 2500,
+  'Vaati': 2000,
   'Allowance': 2500,
-  'Govt Ration Income': 1000,
+  'Govt Ration Income': 0,
   'Ration Income': 380,
   'Mill SVRM Mann.': 150,
-  'Ajai Extra': 15000,
+  'Ajai Extra': 25000,
   'Appa Extra Earnings': 0,
   'Home Extra': 0,
   'BMW': 5000,
-  'Extra Income - Ajai': 0,
-  'Extra Income - Appa': 0,
-  'Extra Income - Home': 0,
   'Debt Income': 0,
   'Other Income': 0,
 };
 
 // Expected debt expense amounts (default)
 export const DEFAULT_EXPECTED_DEBT_EXPENSE: Record<string, number> = {
-  'Loan Repaid': 12500,
+  'Loan Repaid': 30000,
   'Appa Ayyapan Kovil': 0,
   'Kannan Mama': 5000,
   'Rajana Athai': 500,
