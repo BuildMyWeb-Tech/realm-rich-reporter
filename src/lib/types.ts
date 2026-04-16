@@ -169,7 +169,7 @@ export const MONTH_NAMES = [
 ];
 
 export const DEFAULT_BUDGETS: Record<string, number> = {
-  'Rent': 5000, 'Milk': 2000, 'Rice': 1500, 'Cylinder': 950, 'EB': 500,
+  'Rent': 7000, 'Milk': 1300, 'Rice': 1000, 'Cylinder': 950, 'EB': 500,
   'Mangal': 2000, 'Medicine': 3500, 'Vegetables': 2000, 'Grocery': 4000,
   'Snacks': 1500, 'Petrol': 3000, 'Cable': 280, 'Recharge': 1300,
   'Hotel/Food': 1000, 'Non Veg': 200, 'Ration': 120, 'Maavu': 150, 'Others': 430,
@@ -187,7 +187,7 @@ export const DEFAULT_EXPECTED_INCOME: Record<string, number> = {
   'Ajai Extra': 25000,
   'Appa Extra Earnings': 0,
   'Home Extra': 0,
-  'BMW': 5000,
+  'BMW': 10000,
   'Debt Income': 0,
   'Other Income': 0,
 };
@@ -197,5 +197,4 @@ export const DEFAULT_EXPECTED_DEBT_EXPENSE: Record<string, number> = {
   'Loan Repaid': 30000,
   'Appa Ayyapan Kovil': 0,
   'Kannan Mama': 5000,
-  'Rajana Athai': 500,
 };
