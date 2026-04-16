@@ -1,3 +1,9 @@
+/**
+ * SettingsPage.tsx — Updated: RecurringManager replaces old recurring section
+ * Replace existing src/pages/SettingsPage.tsx with this file.
+ * All existing functionality preserved; RecurringManager replaces the old basic form.
+ */
+
 import { useState } from 'react';
 import { useFinance } from '@/contexts/FinanceContext';
 import {
@@ -15,15 +21,16 @@ import {
   AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import RecurringManager from '@/components/RecurringManager';
 import { toast } from 'sonner';
-import { Download, Plus, Trash2, Pencil, Check, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { Download, Plus, Trash2, Pencil, Check, X, ChevronDown, ChevronUp, Repeat } from 'lucide-react';
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
 }
 
-function Section({ title, children, defaultOpen = false }: {
-  title: string; children: React.ReactNode; defaultOpen?: boolean;
+function Section({ title, children, defaultOpen = false, icon }: {
+  title: string; children: React.ReactNode; defaultOpen?: boolean; icon?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -32,7 +39,7 @@ function Section({ title, children, defaultOpen = false }: {
         className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold text-foreground hover:bg-muted/30 transition-colors"
         onClick={() => setOpen(o => !o)}
       >
-        {title}
+        <div className="flex items-center gap-2">{icon}<span>{title}</span></div>
         {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
       </button>
       {open && <div className="px-4 pb-4">{children}</div>}
@@ -44,19 +51,16 @@ export default function SettingsPage() {
   const {
     state,
     setInitialBalance, setAccountBalance,
-    addRecurring, deleteRecurring,
     setIncomeSources, setExpenseSources, setAccountNames,
   } = useFinance();
 
   const [balances, setBalances] = useState(state.initialBalances);
   const [acctBalances, setAcctBalances] = useState(state.accountBalances || {});
 
-  // Account names — driven by context state
   const accountNames = state.accountNames || {};
   const [editingAcct, setEditingAcct] = useState<string | null>(null);
   const [editAcctName, setEditAcctName] = useState('');
 
-  // Income Sources — driven by context state
   const incomeSources: IncomeSource[] = state.incomeSources || [];
   const [newIncomeName, setNewIncomeName] = useState('');
   const [newIncomeGroup, setNewIncomeGroup] = useState<'home' | 'debt'>('home');
@@ -65,7 +69,6 @@ export default function SettingsPage() {
   const [editIncomeFields, setEditIncomeFields] = useState<Partial<IncomeSource>>({});
   const [deleteIncomeTarget, setDeleteIncomeTarget] = useState<IncomeSource | null>(null);
 
-  // Expense Sources — driven by context state
   const expenseSources: ExpenseSource[] = state.expenseSources || [];
   const [newExpenseName, setNewExpenseName] = useState('');
   const [newExpenseGroup, setNewExpenseGroup] = useState<'home' | 'debt'>('home');
@@ -74,27 +77,14 @@ export default function SettingsPage() {
   const [editExpenseFields, setEditExpenseFields] = useState<Partial<ExpenseSource>>({});
   const [deleteExpenseTarget, setDeleteExpenseTarget] = useState<ExpenseSource | null>(null);
 
-  // Recurring
-  const [recForm, setRecForm] = useState({
-    person: '', type: 'expense' as 'income' | 'expense',
-    category: '', amount: '', paymentMode: 'cash' as 'cash' | 'bank',
-    dayOfMonth: '1', notes: '',
-  });
-  const [deleteRecurringTarget, setDeleteRecurringTarget] = useState<string | null>(null);
-
-  // ── Save balances ─────────────────────────────────────────────────────────
   const saveBalances = () => {
     PERSONS.forEach(p => setInitialBalance(p, balances[p] || 0));
     ACCOUNTS.forEach(a => setAccountBalance(a.id, acctBalances[a.id] || 0));
     toast.success('Opening balances saved');
   };
 
-  // ── Account rename ────────────────────────────────────────────────────────
   const saveAcctName = (id: string) => {
-    const updated = {
-      ...accountNames,
-      [id]: editAcctName.trim() || ACCOUNTS.find(a => a.id === id)?.name || id,
-    };
+    const updated = { ...accountNames, [id]: editAcctName.trim() || ACCOUNTS.find(a => a.id === id)?.name || id };
     setAccountNames(updated);
     setEditingAcct(null);
     toast.success('Account name updated');
@@ -103,23 +93,16 @@ export default function SettingsPage() {
   const getAcctDisplayName = (id: string) =>
     accountNames[id] || ACCOUNTS.find(a => a.id === id)?.name || id;
 
-  // ── Income Sources ─────────────────────────────────────────────────────────
-
   const addIncomeSource = () => {
     if (!newIncomeName.trim()) { toast.error('Enter a source name'); return; }
     const builtIn = [...HOME_INCOME_CATEGORIES as readonly string[], ...DEBT_INCOME_CATEGORIES as readonly string[]];
     if (builtIn.includes(newIncomeName.trim()) || incomeSources.some(s => s.name === newIncomeName.trim())) {
       toast.error('Source already exists'); return;
     }
-    const updated: IncomeSource[] = [...incomeSources, {
-      id: uid(),
-      name: newIncomeName.trim(),
-      group: newIncomeGroup,
-      defaultExpected: Number(newIncomeExpected) || 0,
-    }];
+    const updated: IncomeSource[] = [...incomeSources, { id: uid(), name: newIncomeName.trim(), group: newIncomeGroup, defaultExpected: Number(newIncomeExpected) || 0 }];
     setIncomeSources(updated);
     setNewIncomeName(''); setNewIncomeExpected('');
-    toast.success('Income source added — visible in Income page immediately');
+    toast.success('Income source added');
   };
 
   const saveIncomeEdit = (id: string) => {
@@ -130,13 +113,10 @@ export default function SettingsPage() {
   };
 
   const deleteIncome = (source: IncomeSource) => {
-    const updated = incomeSources.filter(s => s.id !== source.id);
-    setIncomeSources(updated);
+    setIncomeSources(incomeSources.filter(s => s.id !== source.id));
     setDeleteIncomeTarget(null);
     toast.success('Income source deleted');
   };
-
-  // ── Expense Sources ───────────────────────────────────────────────────────
 
   const addExpenseSource = () => {
     if (!newExpenseName.trim()) { toast.error('Enter a source name'); return; }
@@ -144,15 +124,10 @@ export default function SettingsPage() {
     if (builtIn.includes(newExpenseName.trim()) || expenseSources.some(s => s.name === newExpenseName.trim())) {
       toast.error('Source already exists'); return;
     }
-    const updated: ExpenseSource[] = [...expenseSources, {
-      id: uid(),
-      name: newExpenseName.trim(),
-      group: newExpenseGroup,
-      defaultBudget: Number(newExpenseBudget) || 0,
-    }];
+    const updated: ExpenseSource[] = [...expenseSources, { id: uid(), name: newExpenseName.trim(), group: newExpenseGroup, defaultBudget: Number(newExpenseBudget) || 0 }];
     setExpenseSources(updated);
     setNewExpenseName(''); setNewExpenseBudget('');
-    toast.success('Expense source added — visible in Expenses page immediately');
+    toast.success('Expense source added');
   };
 
   const saveExpenseEdit = (id: string) => {
@@ -163,31 +138,11 @@ export default function SettingsPage() {
   };
 
   const deleteExpense = (source: ExpenseSource) => {
-    const updated = expenseSources.filter(s => s.id !== source.id);
-    setExpenseSources(updated);
+    setExpenseSources(expenseSources.filter(s => s.id !== source.id));
     setDeleteExpenseTarget(null);
     toast.success('Expense source deleted');
   };
 
-  // ── Recurring ─────────────────────────────────────────────────────────────
-  const addRec = () => {
-    if (!recForm.person || !recForm.category || !recForm.amount) {
-      toast.error('Fill all fields'); return;
-    }
-    addRecurring({
-      person: recForm.person as Person,
-      type: recForm.type,
-      category: recForm.category,
-      amount: Number(recForm.amount),
-      paymentMode: recForm.paymentMode,
-      notes: recForm.notes,
-      dayOfMonth: Number(recForm.dayOfMonth),
-    });
-    toast.success('Recurring entry added');
-    setRecForm({ person: '', type: 'expense', category: '', amount: '', paymentMode: 'cash', dayOfMonth: '1', notes: '' });
-  };
-
-  // ── Export / Import ───────────────────────────────────────────────────────
   const exportData = () => {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -214,8 +169,6 @@ export default function SettingsPage() {
     reader.readAsText(file);
   };
 
-  const categories = recForm.type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
-
   return (
     <div className="pb-20 px-4 pt-4 max-w-lg mx-auto space-y-4 animate-slide-up">
       <h1 className="text-xl font-bold text-foreground">Settings</h1>
@@ -239,20 +192,15 @@ export default function SettingsPage() {
         </div>
       </Section>
 
-      {/* ── ACCOUNT NAMES CRUD ───────────────────────────────────── */}
+      {/* ── ACCOUNT NAMES ────────────────────────────────────────── */}
       <Section title="Account Names (Rename)">
         <div className="space-y-1.5 mt-1">
           {ACCOUNTS.map(acc => (
             <div key={acc.id} className="flex items-center gap-2 py-1.5 border-b border-border/30 last:border-0">
               {editingAcct === acc.id ? (
                 <>
-                  <Input
-                    className="flex-1 h-7 text-xs"
-                    value={editAcctName}
-                    onChange={e => setEditAcctName(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') saveAcctName(acc.id); if (e.key === 'Escape') setEditingAcct(null); }}
-                    autoFocus
-                  />
+                  <Input className="flex-1 h-7 text-xs" value={editAcctName} onChange={e => setEditAcctName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') saveAcctName(acc.id); if (e.key === 'Escape') setEditingAcct(null); }} autoFocus />
                   <button onClick={() => saveAcctName(acc.id)} className="text-success shrink-0"><Check className="h-3.5 w-3.5" /></button>
                   <button onClick={() => setEditingAcct(null)} className="text-muted-foreground shrink-0"><X className="h-3.5 w-3.5" /></button>
                 </>
@@ -263,10 +211,8 @@ export default function SettingsPage() {
                     {accountNames[acc.id] && <p className="text-[10px] text-muted-foreground">Default: {acc.name}</p>}
                   </div>
                   <span className="text-[10px] text-muted-foreground shrink-0">{acc.type}</span>
-                  <button
-                    className="text-muted-foreground hover:text-primary shrink-0"
-                    onClick={() => { setEditingAcct(acc.id); setEditAcctName(getAcctDisplayName(acc.id)); }}
-                  >
+                  <button className="text-muted-foreground hover:text-primary shrink-0"
+                    onClick={() => { setEditingAcct(acc.id); setEditAcctName(getAcctDisplayName(acc.id)); }}>
                     <Pencil className="h-3 w-3" />
                   </button>
                 </>
@@ -283,10 +229,9 @@ export default function SettingsPage() {
           {HOME_INCOME_CATEGORIES.map(cat => (
             <div key={cat} className="flex items-center gap-2 py-1.5 px-2 rounded-lg bg-muted/20 text-xs">
               <span className="flex-1">{cat}</span>
-              <span className="text-[10px] text-muted-foreground bg-success/10 text-success px-1.5 py-0.5 rounded-full">Home · Built-in</span>
+              <span className="text-[10px] bg-success/10 text-success px-1.5 py-0.5 rounded-full">Home · Built-in</span>
             </div>
           ))}
-
           <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mt-3 mb-1">💳 Built-in Debt Income</p>
           {DEBT_INCOME_CATEGORIES.map(cat => (
             <div key={cat} className="flex items-center gap-2 py-1.5 px-2 rounded-lg bg-muted/20 text-xs">
@@ -294,7 +239,6 @@ export default function SettingsPage() {
               <span className="text-[10px] bg-warning/10 text-warning px-1.5 py-0.5 rounded-full">Debt · Built-in</span>
             </div>
           ))}
-
           {incomeSources.length > 0 && (
             <>
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mt-3 mb-1">✏️ Custom Sources</p>
@@ -302,85 +246,39 @@ export default function SettingsPage() {
                 <div key={s.id} className="flex items-center gap-2 py-1.5 px-2 rounded-lg bg-primary/5 border border-primary/10">
                   {editingIncomeId === s.id ? (
                     <>
-                      <Input
-                        className="flex-1 h-6 text-xs"
-                        value={editIncomeFields.name ?? s.name}
-                        onChange={e => setEditIncomeFields(f => ({ ...f, name: e.target.value }))}
-                        autoFocus
-                      />
-                      <Select
-                        value={editIncomeFields.group ?? s.group}
-                        onValueChange={v => setEditIncomeFields(f => ({ ...f, group: v as 'home' | 'debt' }))}
-                      >
+                      <Input className="flex-1 h-6 text-xs" value={editIncomeFields.name ?? s.name} onChange={e => setEditIncomeFields(f => ({ ...f, name: e.target.value }))} autoFocus />
+                      <Select value={editIncomeFields.group ?? s.group} onValueChange={v => setEditIncomeFields(f => ({ ...f, group: v as 'home' | 'debt' }))}>
                         <SelectTrigger className="w-20 h-6 text-xs"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="home">Home</SelectItem>
-                          <SelectItem value="debt">Debt</SelectItem>
-                        </SelectContent>
+                        <SelectContent><SelectItem value="home">Home</SelectItem><SelectItem value="debt">Debt</SelectItem></SelectContent>
                       </Select>
-                      <Input
-                        type="number"
-                        placeholder="₹ Expected"
-                        className="w-20 h-6 text-xs"
-                        value={editIncomeFields.defaultExpected ?? s.defaultExpected}
-                        onChange={e => setEditIncomeFields(f => ({ ...f, defaultExpected: Number(e.target.value) }))}
-                      />
+                      <Input type="number" placeholder="₹ Expected" className="w-20 h-6 text-xs" value={editIncomeFields.defaultExpected ?? s.defaultExpected} onChange={e => setEditIncomeFields(f => ({ ...f, defaultExpected: Number(e.target.value) }))} />
                       <button onClick={() => saveIncomeEdit(s.id)} className="text-success shrink-0"><Check className="h-3.5 w-3.5" /></button>
                       <button onClick={() => setEditingIncomeId(null)} className="text-muted-foreground shrink-0"><X className="h-3.5 w-3.5" /></button>
                     </>
                   ) : (
                     <>
                       <span className="flex-1 text-xs font-medium truncate">{s.name}</span>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${s.group === 'home' ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'}`}>
-                        {s.group === 'home' ? 'Home' : 'Debt'}
-                      </span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${s.group === 'home' ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'}`}>{s.group}</span>
                       <span className="text-[10px] text-muted-foreground shrink-0">₹{s.defaultExpected.toLocaleString('en-IN')}</span>
-                      <button
-                        className="text-muted-foreground hover:text-primary shrink-0"
-                        onClick={() => { setEditingIncomeId(s.id); setEditIncomeFields({ name: s.name, group: s.group, defaultExpected: s.defaultExpected }); }}
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </button>
-                      <button
-                        className="text-muted-foreground hover:text-destructive shrink-0"
-                        onClick={() => setDeleteIncomeTarget(s)}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
+                      <button className="text-muted-foreground hover:text-primary shrink-0" onClick={() => { setEditingIncomeId(s.id); setEditIncomeFields({ name: s.name, group: s.group, defaultExpected: s.defaultExpected }); }}><Pencil className="h-3 w-3" /></button>
+                      <button className="text-muted-foreground hover:text-destructive shrink-0" onClick={() => setDeleteIncomeTarget(s)}><Trash2 className="h-3 w-3" /></button>
                     </>
                   )}
                 </div>
               ))}
             </>
           )}
-
           <div className="mt-3 pt-3 border-t border-border/40 space-y-2">
             <p className="text-xs font-semibold text-foreground">Add New Income Source</p>
-            <Input
-              placeholder="Source name (e.g. Hari)"
-              value={newIncomeName}
-              onChange={e => setNewIncomeName(e.target.value)}
-              className="text-sm"
-            />
+            <Input placeholder="Source name" value={newIncomeName} onChange={e => setNewIncomeName(e.target.value)} className="text-sm" />
             <div className="grid grid-cols-2 gap-2">
               <Select value={newIncomeGroup} onValueChange={v => setNewIncomeGroup(v as 'home' | 'debt')}>
                 <SelectTrigger className="text-sm"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="home">🏠 Home</SelectItem>
-                  <SelectItem value="debt">💳 Debt</SelectItem>
-                </SelectContent>
+                <SelectContent><SelectItem value="home">🏠 Home</SelectItem><SelectItem value="debt">💳 Debt</SelectItem></SelectContent>
               </Select>
-              <Input
-                type="number"
-                placeholder="Default expected ₹"
-                value={newIncomeExpected}
-                onChange={e => setNewIncomeExpected(e.target.value)}
-                className="text-sm"
-              />
+              <Input type="number" placeholder="Default expected ₹" value={newIncomeExpected} onChange={e => setNewIncomeExpected(e.target.value)} className="text-sm" />
             </div>
-            <Button onClick={addIncomeSource} className="w-full" size="sm">
-              <Plus className="h-3.5 w-3.5 mr-1" /> Add Income Source
-            </Button>
+            <Button onClick={addIncomeSource} className="w-full" size="sm"><Plus className="h-3.5 w-3.5 mr-1" /> Add Income Source</Button>
           </div>
         </div>
       </Section>
@@ -395,7 +293,6 @@ export default function SettingsPage() {
               <span className="text-[10px] bg-success/10 text-success px-1.5 py-0.5 rounded-full">Home · Built-in</span>
             </div>
           ))}
-
           <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mt-3 mb-1">💳 Built-in Debt Expenses</p>
           {DEBT_EXPENSE_CATEGORIES.map(cat => (
             <div key={cat} className="flex items-center gap-2 py-1.5 px-2 rounded-lg bg-muted/20 text-xs">
@@ -403,7 +300,6 @@ export default function SettingsPage() {
               <span className="text-[10px] bg-warning/10 text-warning px-1.5 py-0.5 rounded-full">Debt · Built-in</span>
             </div>
           ))}
-
           {expenseSources.length > 0 && (
             <>
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mt-3 mb-1">✏️ Custom Expense Sources</p>
@@ -411,133 +307,47 @@ export default function SettingsPage() {
                 <div key={s.id} className="flex items-center gap-2 py-1.5 px-2 rounded-lg bg-primary/5 border border-primary/10">
                   {editingExpenseId === s.id ? (
                     <>
-                      <Input
-                        className="flex-1 h-6 text-xs"
-                        value={editExpenseFields.name ?? s.name}
-                        onChange={e => setEditExpenseFields(f => ({ ...f, name: e.target.value }))}
-                        autoFocus
-                      />
-                      <Select
-                        value={editExpenseFields.group ?? s.group}
-                        onValueChange={v => setEditExpenseFields(f => ({ ...f, group: v as 'home' | 'debt' }))}
-                      >
+                      <Input className="flex-1 h-6 text-xs" value={editExpenseFields.name ?? s.name} onChange={e => setEditExpenseFields(f => ({ ...f, name: e.target.value }))} autoFocus />
+                      <Select value={editExpenseFields.group ?? s.group} onValueChange={v => setEditExpenseFields(f => ({ ...f, group: v as 'home' | 'debt' }))}>
                         <SelectTrigger className="w-20 h-6 text-xs"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="home">Home</SelectItem>
-                          <SelectItem value="debt">Debt</SelectItem>
-                        </SelectContent>
+                        <SelectContent><SelectItem value="home">Home</SelectItem><SelectItem value="debt">Debt</SelectItem></SelectContent>
                       </Select>
-                      <Input
-                        type="number"
-                        placeholder="₹ Budget"
-                        className="w-20 h-6 text-xs"
-                        value={editExpenseFields.defaultBudget ?? s.defaultBudget}
-                        onChange={e => setEditExpenseFields(f => ({ ...f, defaultBudget: Number(e.target.value) }))}
-                      />
+                      <Input type="number" placeholder="₹ Budget" className="w-20 h-6 text-xs" value={editExpenseFields.defaultBudget ?? s.defaultBudget} onChange={e => setEditExpenseFields(f => ({ ...f, defaultBudget: Number(e.target.value) }))} />
                       <button onClick={() => saveExpenseEdit(s.id)} className="text-success shrink-0"><Check className="h-3.5 w-3.5" /></button>
                       <button onClick={() => setEditingExpenseId(null)} className="text-muted-foreground shrink-0"><X className="h-3.5 w-3.5" /></button>
                     </>
                   ) : (
                     <>
                       <span className="flex-1 text-xs font-medium truncate">{s.name}</span>
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${s.group === 'home' ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'}`}>
-                        {s.group === 'home' ? 'Home' : 'Debt'}
-                      </span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${s.group === 'home' ? 'bg-success/15 text-success' : 'bg-warning/15 text-warning'}`}>{s.group}</span>
                       <span className="text-[10px] text-muted-foreground shrink-0">₹{s.defaultBudget.toLocaleString('en-IN')}</span>
-                      <button
-                        className="text-muted-foreground hover:text-primary shrink-0"
-                        onClick={() => { setEditingExpenseId(s.id); setEditExpenseFields({ name: s.name, group: s.group, defaultBudget: s.defaultBudget }); }}
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </button>
-                      <button
-                        className="text-muted-foreground hover:text-destructive shrink-0"
-                        onClick={() => setDeleteExpenseTarget(s)}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
+                      <button className="text-muted-foreground hover:text-primary shrink-0" onClick={() => { setEditingExpenseId(s.id); setEditExpenseFields({ name: s.name, group: s.group, defaultBudget: s.defaultBudget }); }}><Pencil className="h-3 w-3" /></button>
+                      <button className="text-muted-foreground hover:text-destructive shrink-0" onClick={() => setDeleteExpenseTarget(s)}><Trash2 className="h-3 w-3" /></button>
                     </>
                   )}
                 </div>
               ))}
             </>
           )}
-
           <div className="mt-3 pt-3 border-t border-border/40 space-y-2">
             <p className="text-xs font-semibold text-foreground">Add New Expense Source</p>
-            <Input
-              placeholder="Expense name"
-              value={newExpenseName}
-              onChange={e => setNewExpenseName(e.target.value)}
-              className="text-sm"
-            />
+            <Input placeholder="Expense name" value={newExpenseName} onChange={e => setNewExpenseName(e.target.value)} className="text-sm" />
             <div className="grid grid-cols-2 gap-2">
               <Select value={newExpenseGroup} onValueChange={v => setNewExpenseGroup(v as 'home' | 'debt')}>
                 <SelectTrigger className="text-sm"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="home">🏠 Home</SelectItem>
-                  <SelectItem value="debt">💳 Debt</SelectItem>
-                </SelectContent>
+                <SelectContent><SelectItem value="home">🏠 Home</SelectItem><SelectItem value="debt">💳 Debt</SelectItem></SelectContent>
               </Select>
-              <Input
-                type="number"
-                placeholder="Default budget ₹"
-                value={newExpenseBudget}
-                onChange={e => setNewExpenseBudget(e.target.value)}
-                className="text-sm"
-              />
+              <Input type="number" placeholder="Default budget ₹" value={newExpenseBudget} onChange={e => setNewExpenseBudget(e.target.value)} className="text-sm" />
             </div>
-            <Button onClick={addExpenseSource} className="w-full" size="sm">
-              <Plus className="h-3.5 w-3.5 mr-1" /> Add Expense Source
-            </Button>
+            <Button onClick={addExpenseSource} className="w-full" size="sm"><Plus className="h-3.5 w-3.5 mr-1" /> Add Expense Source</Button>
           </div>
         </div>
       </Section>
 
-      {/* ── RECURRING ENTRIES ────────────────────────────────────── */}
-      <Section title="Recurring Entries">
-        {state.recurringEntries.length > 0 && (
-          <div className="space-y-2 mb-4 mt-2">
-            {state.recurringEntries.map(r => (
-              <div key={r.id} className="flex items-center justify-between bg-muted/50 rounded-lg px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium">{r.category} · ₹{r.amount.toLocaleString('en-IN')}</p>
-                  <p className="text-xs text-muted-foreground">{r.person} · Day {r.dayOfMonth} · {r.type}</p>
-                </div>
-                <Button
-                  variant="ghost" size="sm"
-                  onClick={() => setDeleteRecurringTarget(r.id)}
-                  className="text-destructive text-xs"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-2">
-            <Select value={recForm.person} onValueChange={v => setRecForm(f => ({ ...f, person: v }))}>
-              <SelectTrigger><SelectValue placeholder="Person" /></SelectTrigger>
-              <SelectContent>{PERSONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
-            </Select>
-            <Select value={recForm.type} onValueChange={v => setRecForm(f => ({ ...f, type: v as any, category: '' }))}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="income">Income</SelectItem>
-                <SelectItem value="expense">Expense</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <Select value={recForm.category} onValueChange={v => setRecForm(f => ({ ...f, category: v }))}>
-            <SelectTrigger><SelectValue placeholder="Category" /></SelectTrigger>
-            <SelectContent>{categories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-          </Select>
-          <div className="grid grid-cols-2 gap-2">
-            <Input type="number" placeholder="Amount" value={recForm.amount} onChange={e => setRecForm(f => ({ ...f, amount: e.target.value }))} />
-            <Input type="number" placeholder="Day of month" value={recForm.dayOfMonth} onChange={e => setRecForm(f => ({ ...f, dayOfMonth: e.target.value }))} min="1" max="31" />
-          </div>
-          <Button onClick={addRec} className="w-full" size="sm">Add Recurring Entry</Button>
+      {/* ── RECURRING ENTRIES — Now uses RecurringManager ─────────── */}
+      <Section title="Recurring Transactions" icon={<Repeat className="h-4 w-4 text-primary" />} defaultOpen={false}>
+        <div className="mt-2">
+          <RecurringManager />
         </div>
       </Section>
 
@@ -561,9 +371,7 @@ export default function SettingsPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Income Source?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Remove <strong>{deleteIncomeTarget?.name}</strong> from custom income sources? Existing transactions are not affected.
-            </AlertDialogDescription>
+            <AlertDialogDescription>Remove <strong>{deleteIncomeTarget?.name}</strong>? Existing transactions are not affected.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -576,29 +384,11 @@ export default function SettingsPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Expense Source?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Remove <strong>{deleteExpenseTarget?.name}</strong> from custom expense sources? Existing transactions are not affected.
-            </AlertDialogDescription>
+            <AlertDialogDescription>Remove <strong>{deleteExpenseTarget?.name}</strong>? Existing transactions are not affected.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => deleteExpenseTarget && deleteExpense(deleteExpenseTarget)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={!!deleteRecurringTarget} onOpenChange={o => { if (!o) setDeleteRecurringTarget(null); }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove Recurring Entry?</AlertDialogTitle>
-            <AlertDialogDescription>Existing transactions are not affected.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => { if (deleteRecurringTarget) { deleteRecurring(deleteRecurringTarget); setDeleteRecurringTarget(null); toast.success('Removed'); } }}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >Remove</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
