@@ -239,7 +239,7 @@ export default function Reports() {
 <body>
   <button class="print-btn no-print" onclick="window.print()">🖨️ Print / Save as PDF</button>
   <div class="header">
-    <div><h1>Family Finance Report</h1><p>${monthLabel}</p></div>
+    <div><h1>Family Finance Tracker Report</h1><p>${monthLabel}</p></div>
     <div style="text-align:right">
       <p style="font-size:11px;color:#64748b;">Savings Rate</p>
       <p style="font-size:20px;font-weight:800;color:${savingsRate >= 20 ? '#16a34a' : savingsRate >= 0 ? '#d97706' : '#dc2626'}">${savingsRate}%</p>

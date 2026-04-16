@@ -207,13 +207,13 @@ export default function MonthSelector() {
           </div>
 
           {/* Carry-forward notice */}
-          <div className="mt-3 p-3 rounded-xl bg-primary/5 border border-primary/15">
+          {/* <div className="mt-3 p-3 rounded-xl bg-primary/5 border border-primary/15">
             <p className="text-[11px] text-muted-foreground">
               <span className="font-semibold text-primary">↩ Auto Carry-Forward:</span>{' '}
               Each month's closing balance automatically becomes the next month's opening balance.
               Jan ending → Feb opening. Navigate months to see the flow.
             </p>
-          </div>
+          </div> */}
         </DialogContent>
       </Dialog>
     </>

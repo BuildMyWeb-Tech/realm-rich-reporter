@@ -39,7 +39,7 @@ export default function Dashboard() {
   return (
     <div className="pb-20 px-4 pt-4 max-w-lg mx-auto space-y-4 animate-slide-up">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-foreground">Family Finance</h1>
+        <h1 className="text-xl font-bold text-foreground">Finance Tracker</h1>
         <MonthSelector />
       </div>
       <p className="text-xs text-muted-foreground -mt-2">{MONTH_NAMES[selectedMonth]} {selectedYear}</p>
@@ -162,7 +162,7 @@ export default function Dashboard() {
       {(topOverspend.length > 0 || nearLimit.length > 0) && (
         <div className="glass-card rounded-xl p-4">
           <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-warning" /> Budget Alerts
+            <AlertTriangle className="h-4 w-4 text-warning" /> Overspend Budget Alerts
           </h2>
           <div className="space-y-2">
             {topOverspend.map(o => (
@@ -174,7 +174,7 @@ export default function Dashboard() {
                 <Progress value={100} className="h-1 [&>div]:bg-destructive" />
               </div>
             ))}
-            {nearLimit.map(o => (
+            {/* {nearLimit.map(o => (
               <div key={o.category}>
                 <div className="flex justify-between items-center text-sm mb-1">
                   <span className="text-warning font-medium">{o.category}</span>
@@ -182,7 +182,7 @@ export default function Dashboard() {
                 </div>
                 <Progress value={o.percent} className="h-1 [&>div]:bg-warning" />
               </div>
-            ))}
+            ))} */}
             {topOverspend.length > 0 && (
               <div className="flex justify-between text-sm font-bold pt-2 border-t border-border/50">
                 <span>Total Overspend</span>
@@ -194,7 +194,7 @@ export default function Dashboard() {
       )}
 
       {/* Recent Transactions */}
-      <div className="glass-card rounded-xl p-4">
+      {/* <div className="glass-card rounded-xl p-4">
         <h2 className="text-sm font-semibold text-foreground mb-3">Recent Transactions</h2>
         {recentTxns.length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-4">No transactions this month</p>
@@ -216,7 +216,7 @@ export default function Dashboard() {
             ))}
           </div>
         )}
-      </div>
+      </div> */}
 
       <TransactionForm />
     </div>

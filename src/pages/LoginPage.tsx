@@ -50,8 +50,8 @@ export default function LoginPage() {
         {/* Logo area */}
         <div style={styles.logoArea}>
           <div style={styles.logoIcon}>₹</div>
-          <h1 style={styles.appName}>Family Finance</h1>
-          <p style={styles.tagline}>குடும்ப நிதி · Your money, together</p>
+          <h1 style={styles.appName}>Family Finance Tracker</h1>
+          {/* <p style={styles.tagline}>குடும்ப நிதி · Your money, together</p> */}
         </div>
 
         {/* Divider */}
@@ -116,20 +116,20 @@ export default function LoginPage() {
         </form>
 
         {/* Footer */}
-        <p style={styles.footer}>
+        {/* <p style={styles.footer}>
           Shared family account · All data synced to cloud
-        </p>
+        </p> */}
       </div>
 
       {/* Members row */}
-      <div style={styles.membersRow}>
+      {/* <div style={styles.membersRow}>
         {['Appa', 'Amma', 'Ajai', 'Mauli'].map((name, i) => (
           <div key={name} style={{ ...styles.memberChip, animationDelay: `${i * 100}ms` }}>
             <span style={styles.memberAvatar}>{name[0]}</span>
             <span style={styles.memberName}>{name}</span>
           </div>
         ))}
-      </div>
+      </div> */}
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500&display=swap');
