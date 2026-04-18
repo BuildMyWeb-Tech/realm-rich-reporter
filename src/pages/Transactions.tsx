@@ -26,14 +26,16 @@ const PAGE_SIZE = 15;
 // ─── Edit/Copy Dialog ──────────────────────────────────────────────────────
 
 function TxnDialog({ open, onClose, initial, mode, onSave }: {
-  open: boolean; onClose: () => void;
-  initial: Transaction; mode: 'edit' | 'copy';
+  open: boolean;
+  onClose: () => void;
+  initial: Transaction;
+  mode: 'edit' | 'copy';
   onSave: (t: Partial<Transaction>) => void;
 }) {
   const { state } = useFinance();
   const [form, setForm] = useState<Partial<Transaction>>({ ...initial });
 
-  const customIncome = state.incomeSources || [];
+  const customIncome  = state.incomeSources  || [];
   const customExpense = state.expenseSources || [];
 
   const cats: string[] = form.type === 'income'
@@ -43,14 +45,11 @@ function TxnDialog({ open, onClose, initial, mode, onSave }: {
     : form.type === 'expense'
       ? form.homeOrDebt === 'debt'
         ? [...DEBT_EXPENSE_CATEGORIES, ...customExpense.filter(s => s.group === 'debt').map(s => s.name)]
-        : [...EXPENSE_CATEGORIES, ...customExpense.filter(s => s.group === 'home').map(s => s.name)]
+        : [...EXPENSE_CATEGORIES,      ...customExpense.filter(s => s.group === 'home').map(s => s.name)]
       : [];
 
   const personAccounts = form.person ? ACCOUNTS.filter(a => a.person === form.person as Person) : [];
 
-  // Transfer to: show all persons including same person
-  const transferToPersons = PERSONS;
-  // Transfer to accounts: if same person → all accounts except selected; else all accounts of that person
   const toAccounts = form.transferTo
     ? form.transferTo === form.person
       ? ACCOUNTS.filter(a => a.person === form.transferTo as Person && a.id !== form.accountId)
@@ -58,12 +57,15 @@ function TxnDialog({ open, onClose, initial, mode, onSave }: {
     : [];
 
   const handleSave = () => {
-    if (!form.amount || Number(form.amount) <= 0) { toast.error('Enter a valid amount'); return; }
+    // FIX: ensure amount is always stored as a positive number
+    const rawAmount = Number(form.amount);
+    if (!rawAmount || rawAmount <= 0) { toast.error('Enter a valid amount'); return; }
     if (form.type !== 'transfer' && !form.category) { toast.error('Select a category'); return; }
     if (form.type === 'transfer' && form.transferToAccountId === form.accountId) {
       toast.error('Cannot transfer to same account'); return;
     }
-    onSave(form);
+    // Force amount positive before saving
+    onSave({ ...form, amount: Math.abs(rawAmount) });
     onClose();
   };
 
@@ -71,77 +73,128 @@ function TxnDialog({ open, onClose, initial, mode, onSave }: {
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
       <DialogContent className="max-w-md mx-auto max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{mode === 'edit' ? '✏️ Edit Transaction' : '📋 Copy Transaction'}</DialogTitle>
+          <DialogTitle>
+            {mode === 'edit' ? '✏️ Edit Transaction' : '📋 Copy Transaction'}
+          </DialogTitle>
         </DialogHeader>
         <div className="space-y-3 pt-1">
+
+          {/* Type */}
           <div>
             <Label className="text-xs">Type</Label>
             <div className="grid grid-cols-3 gap-2 mt-1">
               {(['expense', 'income', 'transfer'] as Transaction['type'][]).map(t => (
-                <Button key={t} size="sm" variant={form.type === t ? 'default' : 'outline'}
-                  onClick={() => setForm(f => ({ ...f, type: t, category: '' }))} className="capitalize">{t}</Button>
+                <Button
+                  key={t} size="sm"
+                  variant={form.type === t ? 'default' : 'outline'}
+                  onClick={() => setForm(f => ({ ...f, type: t, category: '' }))}
+                  className="capitalize"
+                >
+                  {t}
+                </Button>
               ))}
             </div>
           </div>
 
+          {/* Classification */}
           <div>
             <Label className="text-xs">Classification</Label>
             <div className="grid grid-cols-2 gap-2 mt-1">
               {(['home', 'debt'] as HomeOrDebt[]).map(hd => (
-                <Button key={hd} size="sm" variant={form.homeOrDebt === hd ? 'default' : 'outline'}
-                  onClick={() => setForm(f => ({ ...f, homeOrDebt: hd, category: '' }))}>
+                <Button
+                  key={hd} size="sm"
+                  variant={form.homeOrDebt === hd ? 'default' : 'outline'}
+                  onClick={() => setForm(f => ({ ...f, homeOrDebt: hd, category: '' }))}
+                >
                   {hd === 'home' ? '🏠 Home' : '💳 Debt'}
                 </Button>
               ))}
             </div>
           </div>
 
+          {/* Date + Amount */}
           <div className="grid grid-cols-2 gap-2">
             <div>
               <Label className="text-xs">Date</Label>
-              <Input type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} className="mt-1" />
+              <Input
+                type="date"
+                value={form.date}
+                onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
+                className="mt-1"
+              />
             </div>
             <div>
               <Label className="text-xs">Amount (₹)</Label>
-              <Input type="number" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: Number(e.target.value) }))} className="mt-1" />
+              {/* FIX: store as absolute value — never allow negative input */}
+              <Input
+                type="number"
+                min="0"
+                value={form.amount}
+                onChange={e => setForm(f => ({ ...f, amount: Math.abs(Number(e.target.value)) }))}
+                className="mt-1"
+              />
             </div>
           </div>
 
+          {/* Person */}
           <div>
             <Label className="text-xs">Person</Label>
-            <Select value={form.person} onValueChange={v => setForm(f => ({ ...f, person: v as Person, accountId: '', transferTo: undefined, transferToAccountId: undefined }))}>
+            <Select
+              value={form.person}
+              onValueChange={v => setForm(f => ({
+                ...f, person: v as Person,
+                accountId: '', transferTo: undefined, transferToAccountId: undefined,
+              }))}
+            >
               <SelectTrigger className="mt-1"><SelectValue placeholder="Person" /></SelectTrigger>
-              <SelectContent>{PERSONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
+              <SelectContent>
+                {PERSONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+              </SelectContent>
             </Select>
           </div>
 
+          {/* Account */}
           {form.person && personAccounts.length > 0 && (
             <div>
               <Label className="text-xs">Account</Label>
-              <Select value={form.accountId || ''} onValueChange={v => setForm(f => ({ ...f, accountId: v }))}>
+              <Select
+                value={form.accountId || ''}
+                onValueChange={v => setForm(f => ({ ...f, accountId: v }))}
+              >
                 <SelectTrigger className="mt-1"><SelectValue placeholder="Select account" /></SelectTrigger>
-                <SelectContent>{personAccounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent>
+                <SelectContent>
+                  {personAccounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                </SelectContent>
               </Select>
             </div>
           )}
 
+          {/* Transfer fields OR Category */}
           {form.type === 'transfer' ? (
             <>
               <div>
                 <Label className="text-xs">Transfer To Person</Label>
-                <Select value={form.transferTo || ''} onValueChange={v => setForm(f => ({ ...f, transferTo: v as Person, transferToAccountId: '' }))}>
+                <Select
+                  value={form.transferTo || ''}
+                  onValueChange={v => setForm(f => ({ ...f, transferTo: v as Person, transferToAccountId: '' }))}
+                >
                   <SelectTrigger className="mt-1"><SelectValue placeholder="Recipient" /></SelectTrigger>
                   <SelectContent>
-                    {transferToPersons.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                    {PERSONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               {form.transferTo && toAccounts.length > 0 && (
                 <div>
                   <Label className="text-xs">To Account</Label>
-                  <Select value={form.transferToAccountId || ''} onValueChange={v => setForm(f => ({ ...f, transferToAccountId: v }))}>
+                  <Select
+                    value={form.transferToAccountId || ''}
+                    onValueChange={v => setForm(f => ({ ...f, transferToAccountId: v }))}
+                  >
                     <SelectTrigger className="mt-1"><SelectValue placeholder="Account" /></SelectTrigger>
-                    <SelectContent>{toAccounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent>
+                    <SelectContent>
+                      {toAccounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                    </SelectContent>
                   </Select>
                 </div>
               )}
@@ -149,14 +202,19 @@ function TxnDialog({ open, onClose, initial, mode, onSave }: {
           ) : (
             <div>
               <Label className="text-xs">Category</Label>
-              <Select value={form.category} onValueChange={v => setForm(f => ({ ...f, category: v }))}>
+              <Select
+                value={form.category}
+                onValueChange={v => setForm(f => ({ ...f, category: v }))}
+              >
                 <SelectTrigger className="mt-1"><SelectValue placeholder="Select category" /></SelectTrigger>
-                <SelectContent>{cats.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                <SelectContent>
+                  {cats.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
               </Select>
             </div>
           )}
 
-          {/* Payment Mode as radio buttons */}
+          {/* Payment Mode */}
           <div>
             <Label className="text-xs">Payment Mode</Label>
             <div className="flex gap-4 mt-2">
@@ -176,9 +234,15 @@ function TxnDialog({ open, onClose, initial, mode, onSave }: {
             </div>
           </div>
 
+          {/* Notes */}
           <div>
             <Label className="text-xs">Notes</Label>
-            <Input value={form.notes || ''} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Optional" className="mt-1" />
+            <Input
+              value={form.notes || ''}
+              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+              placeholder="Optional"
+              className="mt-1"
+            />
           </div>
 
           <div className="flex gap-2 pt-1">
@@ -207,22 +271,24 @@ function TxnCard({ t, fmt, onEdit, onCopy, onDelete }: {
   return (
     <div className="glass-card rounded-xl p-3">
       <div className="flex items-start justify-between gap-2">
-        {/* Left: category + notes */}
+
+        {/* Left: icon + label */}
         <div className="flex gap-2.5 flex-1 min-w-0">
           <div className={cn(
             'h-9 w-9 rounded-full flex items-center justify-center text-xs font-bold shrink-0 mt-0.5',
-            t.type === 'income' ? 'bg-success/15 text-success' :
-            t.type === 'expense' ? 'bg-destructive/15 text-destructive' : 'bg-blue-500/15 text-blue-500'
+            t.type === 'income'   ? 'bg-success/15 text-success'     :
+            t.type === 'expense'  ? 'bg-destructive/15 text-destructive' :
+                                    'bg-blue-500/15 text-blue-500',
           )}>
             {t.type === 'transfer' ? '↔' : t.type === 'income' ? '↑' : '↓'}
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-foreground truncate">
-              {t.type === 'transfer'
-                ? `Transfer → ${t.transferTo}`
-                : t.category}
+              {t.type === 'transfer' ? `Transfer → ${t.transferTo}` : t.category}
               {t.homeOrDebt === 'debt' && (
-                <span className="ml-1.5 text-[9px] bg-amber-500/20 text-amber-500 rounded px-1 py-0.5 font-bold">DEBT</span>
+                <span className="ml-1.5 text-[9px] bg-amber-500/20 text-amber-500 rounded px-1 py-0.5 font-bold">
+                  DEBT
+                </span>
               )}
             </p>
             {t.notes && (
@@ -231,35 +297,62 @@ function TxnCard({ t, fmt, onEdit, onCopy, onDelete }: {
           </div>
         </div>
 
-        {/* Right: amount + actions */}
+        {/* Right: amount + action buttons */}
         <div className="flex flex-col items-end gap-1 shrink-0">
+          {/*
+            FIX: amounts are always positive in DB (enforced by normalizeTransaction).
+            We apply the sign here in the display layer only.
+            income → green +
+            expense → red -
+            transfer → blue (no sign, it's a shift)
+          */}
           <span className={cn(
             'text-sm font-bold',
-            t.type === 'income' ? 'text-success' :
-            t.type === 'expense' ? 'text-destructive' : 'text-blue-500'
+            t.type === 'income'   ? 'text-success'     :
+            t.type === 'expense'  ? 'text-destructive' : 'text-blue-500',
           )}>
-            {t.type === 'income' ? '+' : t.type === 'expense' ? '-' : ''}{fmt(t.amount)}
+            {t.type === 'income'  ? '+' :
+             t.type === 'expense' ? '-' : ''}
+            {fmt(t.amount)}
           </span>
           <div className="flex gap-0.5">
-            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-primary" onClick={onEdit}>
+            <Button
+              variant="ghost" size="icon"
+              className="h-6 w-6 text-muted-foreground hover:text-primary"
+              onClick={onEdit}
+            >
               <Pencil className="h-3 w-3" />
             </Button>
-            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-success" onClick={onCopy}>
+            <Button
+              variant="ghost" size="icon"
+              className="h-6 w-6 text-muted-foreground hover:text-success"
+              onClick={onCopy}
+            >
               <Copy className="h-3 w-3" />
             </Button>
-            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={onDelete}>
+            <Button
+              variant="ghost" size="icon"
+              className="h-6 w-6 text-muted-foreground hover:text-destructive"
+              onClick={onDelete}
+            >
               <Trash2 className="h-3 w-3" />
             </Button>
           </div>
         </div>
       </div>
 
-      {/* Bottom row: person · payment · account */}
+      {/* Bottom: person · payment · account */}
       <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-        <span className="text-[11px] bg-muted/60 text-muted-foreground rounded-full px-2 py-0.5 font-medium">{t.person}</span>
-        <span className="text-[11px] bg-muted/60 text-muted-foreground rounded-full px-2 py-0.5 capitalize">{t.paymentMode}</span>
+        <span className="text-[11px] bg-muted/60 text-muted-foreground rounded-full px-2 py-0.5 font-medium">
+          {t.person}
+        </span>
+        <span className="text-[11px] bg-muted/60 text-muted-foreground rounded-full px-2 py-0.5 capitalize">
+          {t.paymentMode}
+        </span>
         {accountName && (
-          <span className="text-[11px] bg-muted/60 text-muted-foreground rounded-full px-2 py-0.5">{accountName}</span>
+          <span className="text-[11px] bg-muted/60 text-muted-foreground rounded-full px-2 py-0.5">
+            {accountName}
+          </span>
         )}
       </div>
     </div>
@@ -269,59 +362,61 @@ function TxnCard({ t, fmt, onEdit, onCopy, onDelete }: {
 // ─── Grouped by date ───────────────────────────────────────────────────────
 
 function formatDateHeader(dateStr: string): string {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  return new Date(dateStr).toLocaleDateString('en-IN', {
+    day: 'numeric', month: 'short', year: 'numeric',
+  });
 }
 
 // ─── Main Page ─────────────────────────────────────────────────────────────
 
 export default function Transactions() {
-  const { state, selectedYear, selectedMonth, deleteTransaction, updateTransaction, addTransaction } = useFinance();
-  const [search, setSearch] = useState('');
-  const [filterPerson, setFilterPerson] = useState('all');
-  const [filterType, setFilterType] = useState('all');
-  const [filterDate, setFilterDate] = useState('');
-  const [page, setPage] = useState(1);
-  const [editTarget, setEditTarget] = useState<Transaction | null>(null);
-  const [copyTarget, setCopyTarget] = useState<Transaction | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<Transaction | null>(null);
-  const today = new Date().toISOString().split('T')[0];
+  const {
+    state, selectedYear, selectedMonth,
+    deleteTransaction, updateTransaction, addTransaction,
+  } = useFinance();
 
+  const [search, setSearch]           = useState('');
+  const [filterPerson, setFilterPerson] = useState('all');
+  const [filterType, setFilterType]   = useState('all');
+  const [filterDate, setFilterDate]   = useState('');
+  const [page, setPage]               = useState(1);
+  const [editTarget, setEditTarget]   = useState<Transaction | null>(null);
+  const [copyTarget, setCopyTarget]   = useState<Transaction | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Transaction | null>(null);
+
+  const today = new Date().toISOString().split('T')[0];
   const hasActiveFilters = search || filterPerson !== 'all' || filterType !== 'all' || filterDate;
 
   const clearAllFilters = () => {
-    setSearch('');
-    setFilterPerson('all');
-    setFilterType('all');
-    setFilterDate('');
-    setPage(1);
+    setSearch(''); setFilterPerson('all'); setFilterType('all'); setFilterDate(''); setPage(1);
   };
 
   const allTxns = useMemo(() => {
     let list = getMonthTransactions(state.transactions, selectedYear, selectedMonth);
     if (filterPerson !== 'all') list = list.filter(t => t.person === filterPerson);
-    if (filterType !== 'all') list = list.filter(t => t.type === filterType);
-    if (filterDate) list = list.filter(t => t.date === filterDate);
+    if (filterType   !== 'all') list = list.filter(t => t.type   === filterType);
+    if (filterDate)              list = list.filter(t => t.date   === filterDate);
     if (search) {
       const q = search.toLowerCase();
       list = list.filter(t =>
         t.category.toLowerCase().includes(q) ||
         (t.notes || '').toLowerCase().includes(q) ||
         t.person.toLowerCase().includes(q) ||
-        String(t.amount).includes(q)
+        String(t.amount).includes(q),
       );
     }
     return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [state.transactions, selectedYear, selectedMonth, filterPerson, filterType, filterDate, search]);
 
-  // Summary values
-  const totalIncome = allTxns.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+  // Summary values — amounts are always positive, sign only in display
+  const totalIncome  = allTxns.filter(t => t.type === 'income' ).reduce((s, t) => s + t.amount, 0);
   const totalExpense = allTxns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+  // FIX: balance = income - expense (correct sign direction)
   const balance = totalIncome - totalExpense;
 
   const totalPages = Math.max(1, Math.ceil(allTxns.length / PAGE_SIZE));
-  const pagedTxns = allTxns.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const resetPage = () => setPage(1);
+  const pagedTxns  = allTxns.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const resetPage  = () => setPage(1);
 
   // Group paged transactions by date
   const grouped = useMemo(() => {
@@ -331,14 +426,17 @@ export default function Transactions() {
       existing.push(t);
       map.set(t.date, existing);
     }
-    // Return as sorted array of [date, txns]
-    return Array.from(map.entries()).sort((a, b) => new Date(b[0]).getTime() - new Date(a[0]).getTime());
+    return Array.from(map.entries()).sort(
+      (a, b) => new Date(b[0]).getTime() - new Date(a[0]).getTime(),
+    );
   }, [pagedTxns]);
 
   const handleSaveEdit = (fields: Partial<Transaction>) => {
     if (!editTarget) return;
     const d = new Date(fields.date || editTarget.date);
-    updateTransaction({ ...editTarget, ...fields, year: d.getFullYear(), month: d.getMonth() });
+    // FIX: ensure amount is positive when saving edits
+    const amount = Math.abs(Number(fields.amount ?? editTarget.amount));
+    updateTransaction({ ...editTarget, ...fields, amount, year: d.getFullYear(), month: d.getMonth() });
     toast.success('Transaction updated');
   };
 
@@ -346,11 +444,12 @@ export default function Transactions() {
     if (!copyTarget) return;
     const { id, ...rest } = copyTarget;
     const d = new Date(fields.date || today);
-    addTransaction({ ...rest, ...fields, year: d.getFullYear(), month: d.getMonth() });
+    const amount = Math.abs(Number(fields.amount ?? rest.amount));
+    addTransaction({ ...rest, ...fields, amount, year: d.getFullYear(), month: d.getMonth() });
     toast.success('Transaction copied');
   };
 
-  const fmt = (n: number) => `₹${n.toLocaleString('en-IN')}`;
+  const fmt = (n: number) => `₹${Math.abs(n).toLocaleString('en-IN')}`;
 
   return (
     <div className="pb-20 px-4 pt-4 max-w-lg mx-auto space-y-4 animate-slide-up">
@@ -359,7 +458,7 @@ export default function Transactions() {
         <MonthSelector />
       </div>
 
-      {/* Summary — 4 cards */}
+      {/* Summary — 4 stat cards */}
       <div className="grid grid-cols-4 gap-2">
         <div className="glass-card rounded-xl p-2.5 text-center">
           <p className="text-[10px] text-muted-foreground mb-0.5">Income</p>
@@ -370,9 +469,13 @@ export default function Transactions() {
           <p className="text-xs font-bold text-destructive truncate">{fmt(totalExpense)}</p>
         </div>
         <div className="glass-card rounded-xl p-2.5 text-center">
-          <p className="text-[10px] text-muted-foreground mb-0.5">Balance</p>
+          {/*
+            FIX: label clarified — this is income minus expense for the FILTERED view.
+            Transfers are excluded. This is intentional and labeled accordingly.
+          */}
+          <p className="text-[10px] text-muted-foreground mb-0.5">Net</p>
           <p className={cn('text-xs font-bold truncate', balance >= 0 ? 'text-success' : 'text-destructive')}>
-            {balance >= 0 ? '+' : ''}{fmt(balance)}
+            {balance >= 0 ? '+' : '-'}{fmt(balance)}
           </p>
         </div>
         <div className="glass-card rounded-xl p-2.5 text-center">
@@ -421,13 +524,10 @@ export default function Transactions() {
           />
           {hasActiveFilters && (
             <Button
-              size="sm"
-              variant="outline"
-              onClick={clearAllFilters}
+              size="sm" variant="outline" onClick={clearAllFilters}
               className="shrink-0 text-xs flex items-center gap-1 text-muted-foreground border-border/60"
             >
-              <X className="h-3 w-3" />
-              Clear All
+              <X className="h-3 w-3" /> Clear All
             </Button>
           )}
         </div>
@@ -441,7 +541,6 @@ export default function Transactions() {
           </div>
         ) : grouped.map(([date, txns]) => (
           <div key={date}>
-            {/* Date Header */}
             <div className="flex items-center gap-2 mb-2">
               <span className="text-xs font-semibold text-muted-foreground">
                 {formatDateHeader(date)}
@@ -451,9 +550,7 @@ export default function Transactions() {
             <div className="space-y-2">
               {txns.map(t => (
                 <TxnCard
-                  key={t.id}
-                  t={t}
-                  fmt={fmt}
+                  key={t.id} t={t} fmt={fmt}
                   onEdit={() => setEditTarget(t)}
                   onCopy={() => setCopyTarget({ ...t, date: today })}
                   onDelete={() => setDeleteTarget(t)}
@@ -467,21 +564,38 @@ export default function Transactions() {
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-3 py-2">
-          <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="h-8 w-8 p-0">
+          <Button
+            variant="outline" size="sm"
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page === 1} className="h-8 w-8 p-0"
+          >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <span className="text-xs text-muted-foreground">Page {page} of {totalPages} · {allTxns.length} records</span>
-          <Button variant="outline" size="sm" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="h-8 w-8 p-0">
+          <span className="text-xs text-muted-foreground">
+            Page {page} of {totalPages} · {allTxns.length} records
+          </span>
+          <Button
+            variant="outline" size="sm"
+            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages} className="h-8 w-8 p-0"
+          >
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
       )}
 
+      {/* Dialogs */}
       {editTarget && (
-        <TxnDialog open={!!editTarget} onClose={() => setEditTarget(null)} initial={editTarget} mode="edit" onSave={handleSaveEdit} />
+        <TxnDialog
+          open={!!editTarget} onClose={() => setEditTarget(null)}
+          initial={editTarget} mode="edit" onSave={handleSaveEdit}
+        />
       )}
       {copyTarget && (
-        <TxnDialog open={!!copyTarget} onClose={() => setCopyTarget(null)} initial={copyTarget} mode="copy" onSave={handleSaveCopy} />
+        <TxnDialog
+          open={!!copyTarget} onClose={() => setCopyTarget(null)}
+          initial={copyTarget} mode="copy" onSave={handleSaveCopy}
+        />
       )}
 
       <AlertDialog open={!!deleteTarget} onOpenChange={o => { if (!o) setDeleteTarget(null); }}>
@@ -493,15 +607,28 @@ export default function Transactions() {
                 <p>This cannot be undone.</p>
                 {deleteTarget && (
                   <div className="rounded-lg bg-muted/50 px-3 py-2 text-sm space-y-1">
-                    <div className="flex justify-between"><span className="text-muted-foreground">Category</span><span className="font-medium">{deleteTarget.category}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Amount</span>
-                      <span className={cn('font-semibold', deleteTarget.type === 'income' ? 'text-success' : 'text-destructive')}>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Category</span>
+                      <span className="font-medium">{deleteTarget.category}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Amount</span>
+                      <span className={cn('font-semibold',
+                        deleteTarget.type === 'income' ? 'text-success' : 'text-destructive')}>
                         {deleteTarget.type === 'income' ? '+' : '-'}{fmt(deleteTarget.amount)}
                       </span>
                     </div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Person</span><span className="font-medium">{deleteTarget.person}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Date</span>
-                      <span className="font-medium">{new Date(deleteTarget.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Person</span>
+                      <span className="font-medium">{deleteTarget.person}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Date</span>
+                      <span className="font-medium">
+                        {new Date(deleteTarget.date).toLocaleDateString('en-IN', {
+                          day: 'numeric', month: 'short', year: 'numeric',
+                        })}
+                      </span>
                     </div>
                   </div>
                 )}
@@ -512,7 +639,11 @@ export default function Transactions() {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                if (deleteTarget) { deleteTransaction(deleteTarget.id); toast.success('Deleted'); setDeleteTarget(null); }
+                if (deleteTarget) {
+                  deleteTransaction(deleteTarget.id);
+                  toast.success('Deleted');
+                  setDeleteTarget(null);
+                }
               }}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >

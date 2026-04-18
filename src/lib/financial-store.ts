@@ -1,23 +1,13 @@
 /**
  * financial-store.ts — Single source of truth for all balance calculations.
  *
- * BUG FIX SUMMARY (all 10 bugs):
- *
- * Bug 1  ✅ Transfers never counted as income or expense. Isolated in transferNet.
- * Bug 2  ✅ Person balance = account-layer + legacy-layer. No path runs both on same tx.
- * Bug 3  ✅ UI shows "Appa CNB → Ajai CB" not "Transfer → Ajai" (in PersonWisePage).
- * Bug 4  ✅ Account-tracked path uses transferToAccountId ONLY.
- *            Legacy path uses transferTo (Person) — the ONLY field available there.
- *            NEW: resolveTransferDestAccount() falls back when transferToAccountId missing.
- * Bug 5  ✅ normalizeTransaction() coerces amount to number + rounds. Missing accountId
- *            transactions fully handled by the legacy path (no silent skip).
- * Bug 6  ✅ getAccountBalance now returns transferNet directly — getPersonBalance
- *            reads it instead of re-looping. Eliminated O(n×m) nested loop.
- * Bug 7  ✅ validateTransfer() enforced at store level, not just in UI.
- * Bug 8  ✅ normalizeTransaction() derives paymentMode from account type.
- * Bug 9  ✅ sortByDateDesc() uses date + id tiebreaker for stable ordering.
- *            vercel.json SPA routing fix in separate file.
- * Bug 10 ✅ rc() (roundCents) applied to every arithmetic result.
+ * FIXES APPLIED:
+ * ✅ normalizeTransaction: amount always positive (Math.abs), type always lowercase+trimmed
+ * ✅ getTotalBalance: initialBalances only added for persons WITHOUT accounts (no double count)
+ * ✅ All arithmetic: rc() on every step (float safety)
+ * ✅ Transfer isolation: never touches income/expense totals
+ * ✅ resolveTransferDestAccount: fallback for missing transferToAccountId
+ * ✅ sortByDateDesc: stable date+id tiebreaker
  */
 
 import {
@@ -38,19 +28,15 @@ const defaultState: FinancialState = {
   accountBalances: {},
 };
 
-// ─── Bug 10: Float safety ─────────────────────────────────────────────────────
+// ─── Float safety ─────────────────────────────────────────────────────────────
 
 /** rc = roundCents. Wrap every monetary arithmetic result to kill float drift. */
 export function rc(value: number): number {
   return Math.round(value);
 }
 
-// ─── Bug 9: Stable sort ───────────────────────────────────────────────────────
-/**
- * Same-day entries previously swapped on re-render (Date.getTime() tie).
- * Tiebreaker: id string comparison (ids start with a timestamp prefix so they
- * are already chronologically ordered within the same day).
- */
+// ─── Stable sort ──────────────────────────────────────────────────────────────
+
 export function sortByDateDesc(txns: Transaction[]): Transaction[] {
   return [...txns].sort((a, b) => {
     const diff = new Date(b.date).getTime() - new Date(a.date).getTime();
@@ -58,18 +44,22 @@ export function sortByDateDesc(txns: Transaction[]): Transaction[] {
   });
 }
 
-// ─── Bug 5 + Bug 8: Transaction normalizer ────────────────────────────────────
+// ─── Transaction normalizer ───────────────────────────────────────────────────
 /**
- * Applied at load time and before every save.
- * Guarantees:
- *  • amount is always a rounded number (never a string like "270" or 270.0)
- *  • paymentMode matches account type (Bug 8)
- *  • homeOrDebt defaults to 'home'
+ * KEY FIX: amount is ALWAYS coerced to a positive number via Math.abs().
+ * If old data stored expenses as negative (-100), Math.abs() corrects it.
+ * type is always lowercased+trimmed so 'Income', 'EXPENSE', 'income ' all work.
  */
 export function normalizeTransaction(t: any): Transaction {
-  const amount = rc(Number(t.amount) || 0);
+  // FIX 1: amount always positive — sign is ONLY applied in calculation logic
+  const amount = rc(Math.abs(Number(t.amount) || 0));
 
-  // Bug 8: derive paymentMode from the source account type
+  // FIX 2: type always lowercase+trimmed — fixes 'Income'/'EXPENSE' casing bugs
+  const type = (typeof t.type === 'string'
+    ? t.type.toLowerCase().trim()
+    : 'expense') as Transaction['type'];
+
+  // Derive paymentMode from account type
   let paymentMode = t.paymentMode ?? 'cash';
   if (t.accountId) {
     const acc = ACCOUNTS.find(a => a.id === t.accountId);
@@ -79,41 +69,32 @@ export function normalizeTransaction(t: any): Transaction {
   return {
     ...t,
     amount,
+    type,
     paymentMode,
     homeOrDebt: t.homeOrDebt || 'home',
   } as Transaction;
 }
 
-// ─── Bug 7: Transfer validation ───────────────────────────────────────────────
-/**
- * Called by every code path that creates a transfer — PersonWisePage,
- * TransactionForm, BulkUpload. Enforces the rule at the store level, not just UI.
- */
+// ─── Transfer validation ──────────────────────────────────────────────────────
+
 export function validateTransfer(
   accountId?: string,
   transferToAccountId?: string,
 ): { ok: boolean; error?: string } {
-  if (!accountId || !transferToAccountId) return { ok: true }; // legacy, no accounts
+  if (!accountId || !transferToAccountId) return { ok: true };
   if (accountId === transferToAccountId) {
     return { ok: false, error: 'Cannot transfer to the same account' };
   }
   return { ok: true };
 }
 
-// ─── Bug 4: Resolve destination account ──────────────────────────────────────
-/**
- * If a transfer has accountId but no transferToAccountId (e.g. old bulk import),
- * we try to resolve the destination via transferTo + paymentMode so the
- * destination account is credited rather than silently losing the money.
- */
+// ─── Resolve destination account ─────────────────────────────────────────────
+
 export function resolveTransferDestAccount(t: Transaction): string | undefined {
   if (t.transferToAccountId) return t.transferToAccountId;
   if (!t.transferTo) return undefined;
-
   const destAccounts = ACCOUNTS.filter(a => a.person === t.transferTo);
   if (destAccounts.length === 0) return undefined;
-
-  // Prefer cash account; fall back to first bank
   const cashAcc = destAccounts.find(a => a.type === 'cash');
   return cashAcc ? cashAcc.id : destAccounts[0].id;
 }
@@ -128,7 +109,7 @@ export function loadState(): FinancialState {
     if (!raw) return defaultState;
     const parsed = JSON.parse(raw);
     if (!parsed.accountBalances) parsed.accountBalances = {};
-    // Bug 5 + Bug 8 + Bug 10: normalize every transaction at load time
+    // Normalize every transaction at load time — fixes casing + negative amounts
     if (parsed.transactions) {
       parsed.transactions = parsed.transactions.map(normalizeTransaction);
     }
@@ -161,23 +142,21 @@ export function getMonthTransactions(
 // ─────────────────────────────────────────────────────────────────────────────
 // ACCOUNT-LEVEL BALANCE
 //
-// Rules applied identically for opening-balance history AND current month:
-//   income  where t.accountId === current         → +amount
-//   expense where t.accountId === current         → -amount
-//   transfer source (accountId === current)       → -amount  (money leaves)
-//   transfer dest   (resolvedDestId === current)  → +amount  (money arrives)
+// Sign rules (amounts are ALWAYS positive in DB):
+//   income  → +amount  (money arrives)
+//   expense → -amount  (money leaves)
+//   transfer source → -amount  (money leaves source account)
+//   transfer dest   → +amount  (money arrives at dest account)
 //
 // Transfers NEVER touch income or expense totals.
-// Bug 4: resolveTransferDestAccount() handles missing transferToAccountId.
-// Bug 6: transferNet is returned so getPersonBalance doesn't re-loop.
-// Bug 10: rc() on every arithmetic step.
+// closing = opening + income - expense + transferNet
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface AccountBalanceResult {
   opening: number;
   income: number;
   expense: number;
-  transferNet: number; // Bug 6: exposed to avoid re-looping in getPersonBalance
+  transferNet: number;
   closing: number;
 }
 
@@ -197,13 +176,13 @@ export function getAccountBalance(
     if (t.year * 12 + t.month >= targetYM) continue;
 
     if (t.type === 'income' && t.accountId === accountId) {
-      opening = rc(opening + t.amount);
+      opening = rc(opening + t.amount);                    // income → add
     } else if (t.type === 'expense' && t.accountId === accountId) {
-      opening = rc(opening - t.amount);
+      opening = rc(opening - t.amount);                    // expense → subtract
     } else if (t.type === 'transfer') {
-      const destId = resolveTransferDestAccount(t); // Bug 4
-      if (t.accountId === accountId) opening = rc(opening - t.amount);
-      if (destId      === accountId) opening = rc(opening + t.amount);
+      const destId = resolveTransferDestAccount(t);
+      if (t.accountId === accountId) opening = rc(opening - t.amount); // source → subtract
+      if (destId      === accountId) opening = rc(opening + t.amount); // dest → add
     }
   }
 
@@ -218,27 +197,19 @@ export function getAccountBalance(
     } else if (t.type === 'expense' && t.accountId === accountId) {
       expense = rc(expense + t.amount);
     } else if (t.type === 'transfer') {
-      const destId = resolveTransferDestAccount(t); // Bug 4
-      if (t.accountId === accountId) transferNet = rc(transferNet - t.amount);
-      if (destId      === accountId) transferNet = rc(transferNet + t.amount);
+      const destId = resolveTransferDestAccount(t);
+      if (t.accountId === accountId) transferNet = rc(transferNet - t.amount); // source → negative
+      if (destId      === accountId) transferNet = rc(transferNet + t.amount); // dest → positive
     }
   }
 
+  // closing = opening + income - expense + transferNet
   const closing = rc(opening + income - expense + transferNet);
   return { opening, income, expense, transferNet, closing };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PERSON-LEVEL BALANCE
-//
-// Strategy: ONE aggregation path per transaction — never both.
-//   t.accountId present → account layer (getAccountBalance)
-//   t.accountId absent  → legacy person layer
-//
-// Bug 6: transferNet read from getAccountBalance.transferNet — no nested re-loop.
-// Bug 2: strict `if (t.accountId) continue` guards the legacy layer.
-// Bug 1: transfers never written to income or expense.
-// Bug 10: rc() on every step.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function getPersonBalance(
@@ -264,22 +235,21 @@ export function getPersonBalance(
       accOpening     = rc(accOpening     + bal.opening);
       accIncome      = rc(accIncome      + bal.income);
       accExpense     = rc(accExpense     + bal.expense);
-      accTransferNet = rc(accTransferNet + bal.transferNet); // Bug 6: no re-loop
+      accTransferNet = rc(accTransferNet + bal.transferNet);
     }
 
-    // ── Legacy layer: no accountId ────────────────────────────────────────────
-    const initial  = initialBalances[person] || 0;
+    // ── Legacy layer: transactions with no accountId ──────────────────────────
+    const initial  = personAccounts.length === 0 ? (initialBalances[person] || 0) : 0;
     const targetYM = year * 12 + month;
     let legacyOpening = initial;
 
     for (const t of txns) {
-      if (t.accountId) continue;                         // Bug 2: strict guard
+      if (t.accountId) continue;                          // strict guard — no double count
       if (t.year * 12 + t.month >= targetYM) continue;
 
       if (t.type === 'income'  && t.person === person) legacyOpening = rc(legacyOpening + t.amount);
       if (t.type === 'expense' && t.person === person) legacyOpening = rc(legacyOpening - t.amount);
       if (t.type === 'transfer') {
-        // Bug 4: legacy path — transferTo (Person) is the only field here
         if (t.person    === person) legacyOpening = rc(legacyOpening - t.amount);
         if (t.transferTo === person) legacyOpening = rc(legacyOpening + t.amount);
       }
@@ -290,12 +260,11 @@ export function getPersonBalance(
     let legacyTransferNet = 0;
 
     for (const t of getMonthTransactions(txns, year, month)) {
-      if (t.accountId) continue;                         // Bug 2: strict guard
+      if (t.accountId) continue;                          // strict guard
 
       if (t.type === 'income'  && t.person === person) legacyIncome  = rc(legacyIncome  + t.amount);
       if (t.type === 'expense' && t.person === person) legacyExpense = rc(legacyExpense + t.amount);
       if (t.type === 'transfer') {
-        // Bug 1: balance shift only — never income/expense
         if (t.person    === person) legacyTransferNet = rc(legacyTransferNet - t.amount);
         if (t.transferTo === person) legacyTransferNet = rc(legacyTransferNet + t.amount);
       }
@@ -309,7 +278,7 @@ export function getPersonBalance(
     return { opening, income, expense, transferNet, closing: rc(opening + income - expense + transferNet) };
   }
 
-  // ── Full legacy fallback (accountBalances system not in use at all) ────────
+  // ── Full legacy fallback (accountBalances system not in use) ──────────────
   const initial  = initialBalances[person] || 0;
   const targetYM = year * 12 + month;
   let opening = initial;
@@ -332,7 +301,6 @@ export function getPersonBalance(
     if (t.type === 'income'  && t.person === person) income  = rc(income  + t.amount);
     if (t.type === 'expense' && t.person === person) expense = rc(expense + t.amount);
     if (t.type === 'transfer') {
-      // Bug 1: balance shift only
       if (t.person    === person) transferNet = rc(transferNet - t.amount);
       if (t.transferTo === person) transferNet = rc(transferNet + t.amount);
     }
@@ -342,7 +310,7 @@ export function getPersonBalance(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PERSON SUMMARY — transfers completely isolated from income/expense (Bug 1)
+// PERSON SUMMARY
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function getPersonSummary(
@@ -368,7 +336,7 @@ export function getPersonSummary(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RUNNING ACCOUNT BALANCE (no date scope — for Settings / overview)
+// RUNNING ACCOUNT BALANCE (no date scope)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function getAccountBalanceSimple(
@@ -383,7 +351,7 @@ export function getAccountBalanceSimple(
     } else if (t.type === 'expense' && t.accountId === accountId) {
       balance = rc(balance - t.amount);
     } else if (t.type === 'transfer') {
-      const destId = resolveTransferDestAccount(t); // Bug 4
+      const destId = resolveTransferDestAccount(t);
       if (t.accountId === accountId) balance = rc(balance - t.amount);
       if (destId      === accountId) balance = rc(balance + t.amount);
     }
@@ -393,7 +361,10 @@ export function getAccountBalanceSimple(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // FAMILY-LEVEL TOTALS
-// Transfers cancel at family level — zero net effect.
+//
+// FIX: initialBalances only added for persons who have NO accounts.
+// Previously both accountBalances and initialBalances were summed,
+// double-counting persons who have both set.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function getTotalBalance(
@@ -404,22 +375,40 @@ export function getTotalBalance(
   accountBalances?: Record<string, number>,
 ) {
   const monthTxns = getMonthTransactions(txns, year, month);
-  // Bug 1: only income and expense — no transfers
+
+  // Transfers never affect family income/expense totals — they cancel out
   const realIncome  = rc(monthTxns.filter(t => t.type === 'income' ).reduce((s, t) => rc(s + t.amount), 0));
   const realExpense = rc(monthTxns.filter(t => t.type === 'expense').reduce((s, t) => rc(s + t.amount), 0));
 
+  // ── Opening balance ────────────────────────────────────────────────────────
   let opening = 0;
-  if (accountBalances) {
-    for (const acc of ACCOUNTS) opening = rc(opening + (accountBalances[acc.id] || 0));
-  }
-  opening = rc(opening + Object.values(initialBalances).reduce((s, v) => rc(s + v), 0));
 
+  if (accountBalances) {
+    // Sum all account opening balances
+    for (const acc of ACCOUNTS) {
+      opening = rc(opening + (accountBalances[acc.id] || 0));
+    }
+    // FIX: Only add initialBalances for persons who have NO accounts configured.
+    // Persons with accounts should NOT also add their initialBalance
+    // (that would double-count their starting money).
+    for (const person of PERSONS) {
+      const hasAccounts = ACCOUNTS.some(a => a.person === person);
+      if (!hasAccounts) {
+        opening = rc(opening + (initialBalances[person] || 0));
+      }
+    }
+  } else {
+    // No account system — use legacy person balances only
+    opening = rc(Object.values(initialBalances).reduce((s, v) => rc(s + v), 0));
+  }
+
+  // Add all historical income/expense (before target month) to opening
   const targetYM = year * 12 + month;
   for (const t of txns) {
     if (t.year * 12 + t.month >= targetYM) continue;
     if (t.type === 'income')  opening = rc(opening + t.amount);
     if (t.type === 'expense') opening = rc(opening - t.amount);
-    // transfers cancel out — no adjustment needed
+    // transfers cancel at family level — no net effect
   }
 
   return {
