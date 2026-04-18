@@ -1,11 +1,49 @@
 /**
  * LoginPage.tsx
- * Family Finance login — clean, warm, Indian family finance aesthetic.
- * Dark olive/cream theme with gold accents.
+ * Family Finance login with Ajai quick-login + localStorage token (30-day persist).
  */
 
 import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+
+const TOKEN_KEY = 'finance_auth_token';
+const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+interface AuthToken {
+  userId: string;
+  password: string;
+  expiresAt: number;
+}
+
+export function saveAuthToken(userId: string, password: string) {
+  const token: AuthToken = {
+    userId,
+    password,
+    expiresAt: Date.now() + TOKEN_TTL_MS,
+  };
+  localStorage.setItem(TOKEN_KEY, JSON.stringify(token));
+}
+
+export function loadAuthToken(): AuthToken | null {
+  try {
+    const raw = localStorage.getItem(TOKEN_KEY);
+    if (!raw) return null;
+    const token: AuthToken = JSON.parse(raw);
+    if (Date.now() > token.expiresAt) {
+      localStorage.removeItem(TOKEN_KEY);
+      return null;
+    }
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+export function clearAuthToken() {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+// ─── Component ─────────────────────────────────────────────────────────────
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -16,8 +54,22 @@ export default function LoginPage() {
   const [shake, setShake] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // On mount: try auto-login from stored token
   useEffect(() => {
-    inputRef.current?.focus();
+    const token = loadAuthToken();
+    if (token) {
+      setUserId(token.userId);
+      setPassword(token.password);
+      // Auto-submit after a short delay for UX
+      setTimeout(() => {
+        const result = login(token.userId, token.password);
+        if (!result.success) {
+          clearAuthToken();
+        }
+      }, 300);
+    } else {
+      inputRef.current?.focus();
+    }
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -29,7 +81,6 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
 
-    // Small delay for UX feel
     await new Promise(r => setTimeout(r, 600));
 
     const result = login(userId, password);
@@ -37,21 +88,43 @@ export default function LoginPage() {
       setError(result.error || 'Invalid credentials');
       setShake(true);
       setTimeout(() => setShake(false), 500);
+    } else {
+      // Save token on successful login
+      saveAuthToken(userId, password);
+    }
+    setLoading(false);
+  };
+
+  const handleAjaiLogin = async () => {
+    const AJAI_ID = 'ajai';
+    const AJAI_PASS = 'ajai123';
+    setUserId(AJAI_ID);
+    setPassword(AJAI_PASS);
+    setError('');
+    setLoading(true);
+
+    await new Promise(r => setTimeout(r, 400));
+
+    const result = login(AJAI_ID, AJAI_PASS);
+    if (!result.success) {
+      setError(result.error || 'Ajai login failed');
+      setShake(true);
+      setTimeout(() => setShake(false), 500);
+    } else {
+      saveAuthToken(AJAI_ID, AJAI_PASS);
     }
     setLoading(false);
   };
 
   return (
     <div style={styles.root}>
-      {/* Background pattern */}
       <div style={styles.bgPattern} />
 
       <div style={{ ...styles.card, ...(shake ? styles.shake : {}) }}>
-        {/* Logo area */}
+        {/* Logo */}
         <div style={styles.logoArea}>
           <div style={styles.logoIcon}>₹</div>
           <h1 style={styles.appName}>Family Finance Tracker</h1>
-          {/* <p style={styles.tagline}>குடும்ப நிதி · Your money, together</p> */}
         </div>
 
         {/* Divider */}
@@ -100,7 +173,7 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            style={{ ...styles.button, ...(loading ? styles.buttonLoading : {}) }}
+            style={{ ...styles.button, ...(loading ? styles.buttonDisabled : {}) }}
             disabled={loading}
           >
             {loading ? (
@@ -115,21 +188,24 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {/* Footer */}
-        {/* <p style={styles.footer}>
-          Shared family account · All data synced to cloud
-        </p> */}
-      </div>
+        {/* Divider */}
+        <div style={{ ...styles.divider, margin: '16px 0 0' }}>
+          <div style={styles.dividerLine} />
+          <span style={styles.dividerText}>Quick Login</span>
+          <div style={styles.dividerLine} />
+        </div>
 
-      {/* Members row */}
-      {/* <div style={styles.membersRow}>
-        {['Appa', 'Amma', 'Ajai', 'Mauli'].map((name, i) => (
-          <div key={name} style={{ ...styles.memberChip, animationDelay: `${i * 100}ms` }}>
-            <span style={styles.memberAvatar}>{name[0]}</span>
-            <span style={styles.memberName}>{name}</span>
-          </div>
-        ))}
-      </div> */}
+        {/* Ajai Quick Login */}
+        <button
+          type="button"
+          onClick={handleAjaiLogin}
+          disabled={loading}
+          style={{ ...styles.ajaiButton, ...(loading ? styles.buttonDisabled : {}) }}
+        >
+          <span style={styles.ajaiAvatar}>A</span>
+          Ajai Login
+        </button>
+      </div>
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500&display=swap');
@@ -149,10 +225,6 @@ export default function LoginPage() {
           0%, 80%, 100% { transform: scale(0); opacity: 0.3; }
           40% { transform: scale(1); opacity: 1; }
         }
-        @keyframes chipIn {
-          from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
       `}</style>
     </div>
   );
@@ -163,7 +235,6 @@ const darkBg = '#1A1F16';
 const cardBg = '#232918';
 const cream = '#F5EDDA';
 const mutedCream = '#A89F8C';
-const green = '#4CAF73';
 
 const styles: Record<string, React.CSSProperties> = {
   root: {
@@ -226,12 +297,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: cream,
     margin: '0 0 6px',
     letterSpacing: '-0.3px',
-  },
-  tagline: {
-    fontSize: '12px',
-    color: mutedCream,
-    margin: 0,
-    letterSpacing: '0.3px',
   },
   divider: {
     display: 'flex',
@@ -311,9 +376,40 @@ const styles: Record<string, React.CSSProperties> = {
     transition: 'opacity 0.2s, transform 0.1s',
     letterSpacing: '0.3px',
   },
-  buttonLoading: {
-    opacity: 0.7,
+  buttonDisabled: {
+    opacity: 0.6,
     cursor: 'not-allowed',
+  },
+  ajaiButton: {
+    marginTop: '14px',
+    width: '100%',
+    background: 'rgba(76,175,115,0.12)',
+    border: '1px solid rgba(76,175,115,0.3)',
+    borderRadius: '12px',
+    padding: '12px',
+    fontSize: '14px',
+    fontWeight: '600',
+    color: '#4CAF73',
+    fontFamily: '"DM Sans", sans-serif',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '10px',
+    transition: 'background 0.2s',
+  },
+  ajaiAvatar: {
+    width: '28px',
+    height: '28px',
+    borderRadius: '50%',
+    background: 'rgba(76,175,115,0.2)',
+    border: '1px solid rgba(76,175,115,0.4)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '13px',
+    fontWeight: '700',
+    color: '#4CAF73',
   },
   loadingDots: {
     display: 'flex',
@@ -327,46 +423,5 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#1A1F16',
     display: 'inline-block',
     animation: 'bounce 1.2s infinite ease-in-out',
-  },
-  footer: {
-    textAlign: 'center',
-    fontSize: '11px',
-    color: 'rgba(168,159,140,0.6)',
-    marginTop: '20px',
-    marginBottom: 0,
-    letterSpacing: '0.2px',
-  },
-  membersRow: {
-    display: 'flex',
-    gap: '10px',
-    animation: 'chipIn 0.8s ease forwards',
-    animationDelay: '0.4s',
-    opacity: 0,
-    position: 'relative',
-    zIndex: 1,
-  },
-  memberChip: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    gap: '4px',
-  },
-  memberAvatar: {
-    width: '36px',
-    height: '36px',
-    borderRadius: '50%',
-    background: 'rgba(201,168,76,0.12)',
-    border: '1px solid rgba(201,168,76,0.25)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '14px',
-    fontWeight: '600',
-    color: gold,
-  },
-  memberName: {
-    fontSize: '10px',
-    color: mutedCream,
-    letterSpacing: '0.2px',
   },
 };

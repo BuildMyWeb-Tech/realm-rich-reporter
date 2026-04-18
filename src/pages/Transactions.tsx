@@ -17,11 +17,13 @@ import {
   AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Trash2, Search, Pencil, Copy, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Trash2, Search, Pencil, Copy, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 const PAGE_SIZE = 15;
+
+// ─── Edit/Copy Dialog ──────────────────────────────────────────────────────
 
 function TxnDialog({ open, onClose, initial, mode, onSave }: {
   open: boolean; onClose: () => void;
@@ -45,11 +47,22 @@ function TxnDialog({ open, onClose, initial, mode, onSave }: {
       : [];
 
   const personAccounts = form.person ? ACCOUNTS.filter(a => a.person === form.person as Person) : [];
-  const toAccounts = form.transferTo ? ACCOUNTS.filter(a => a.person === form.transferTo as Person) : [];
+
+  // Transfer to: show all persons including same person
+  const transferToPersons = PERSONS;
+  // Transfer to accounts: if same person → all accounts except selected; else all accounts of that person
+  const toAccounts = form.transferTo
+    ? form.transferTo === form.person
+      ? ACCOUNTS.filter(a => a.person === form.transferTo as Person && a.id !== form.accountId)
+      : ACCOUNTS.filter(a => a.person === form.transferTo as Person)
+    : [];
 
   const handleSave = () => {
     if (!form.amount || Number(form.amount) <= 0) { toast.error('Enter a valid amount'); return; }
     if (form.type !== 'transfer' && !form.category) { toast.error('Select a category'); return; }
+    if (form.type === 'transfer' && form.transferToAccountId === form.accountId) {
+      toast.error('Cannot transfer to same account'); return;
+    }
     onSave(form);
     onClose();
   };
@@ -96,7 +109,7 @@ function TxnDialog({ open, onClose, initial, mode, onSave }: {
 
           <div>
             <Label className="text-xs">Person</Label>
-            <Select value={form.person} onValueChange={v => setForm(f => ({ ...f, person: v as Person, accountId: '' }))}>
+            <Select value={form.person} onValueChange={v => setForm(f => ({ ...f, person: v as Person, accountId: '', transferTo: undefined, transferToAccountId: undefined }))}>
               <SelectTrigger className="mt-1"><SelectValue placeholder="Person" /></SelectTrigger>
               <SelectContent>{PERSONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
             </Select>
@@ -115,10 +128,12 @@ function TxnDialog({ open, onClose, initial, mode, onSave }: {
           {form.type === 'transfer' ? (
             <>
               <div>
-                <Label className="text-xs">Transfer To</Label>
+                <Label className="text-xs">Transfer To Person</Label>
                 <Select value={form.transferTo || ''} onValueChange={v => setForm(f => ({ ...f, transferTo: v as Person, transferToAccountId: '' }))}>
                   <SelectTrigger className="mt-1"><SelectValue placeholder="Recipient" /></SelectTrigger>
-                  <SelectContent>{PERSONS.filter(p => p !== form.person).map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
+                  <SelectContent>
+                    {transferToPersons.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                  </SelectContent>
                 </Select>
               </div>
               {form.transferTo && toAccounts.length > 0 && (
@@ -141,15 +156,24 @@ function TxnDialog({ open, onClose, initial, mode, onSave }: {
             </div>
           )}
 
+          {/* Payment Mode as radio buttons */}
           <div>
             <Label className="text-xs">Payment Mode</Label>
-            <Select value={form.paymentMode} onValueChange={v => setForm(f => ({ ...f, paymentMode: v as PaymentMode }))}>
-              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="cash">Cash</SelectItem>
-                <SelectItem value="bank">Bank</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex gap-4 mt-2">
+              {(['cash', 'bank'] as PaymentMode[]).map(m => (
+                <label key={m} className="flex items-center gap-1.5 cursor-pointer text-sm">
+                  <input
+                    type="radio"
+                    name="edit-paymentMode"
+                    value={m}
+                    checked={form.paymentMode === m}
+                    onChange={() => setForm(f => ({ ...f, paymentMode: m }))}
+                    className="accent-primary"
+                  />
+                  <span className="capitalize">{m}</span>
+                </label>
+              ))}
+            </div>
           </div>
 
           <div>
@@ -169,6 +193,88 @@ function TxnDialog({ open, onClose, initial, mode, onSave }: {
   );
 }
 
+// ─── Transaction Card ──────────────────────────────────────────────────────
+
+function TxnCard({ t, fmt, onEdit, onCopy, onDelete }: {
+  t: Transaction;
+  fmt: (n: number) => string;
+  onEdit: () => void;
+  onCopy: () => void;
+  onDelete: () => void;
+}) {
+  const accountName = t.accountId ? ACCOUNTS.find(a => a.id === t.accountId)?.name : null;
+
+  return (
+    <div className="glass-card rounded-xl p-3">
+      <div className="flex items-start justify-between gap-2">
+        {/* Left: category + notes */}
+        <div className="flex gap-2.5 flex-1 min-w-0">
+          <div className={cn(
+            'h-9 w-9 rounded-full flex items-center justify-center text-xs font-bold shrink-0 mt-0.5',
+            t.type === 'income' ? 'bg-success/15 text-success' :
+            t.type === 'expense' ? 'bg-destructive/15 text-destructive' : 'bg-blue-500/15 text-blue-500'
+          )}>
+            {t.type === 'transfer' ? '↔' : t.type === 'income' ? '↑' : '↓'}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-foreground truncate">
+              {t.type === 'transfer'
+                ? `Transfer → ${t.transferTo}`
+                : t.category}
+              {t.homeOrDebt === 'debt' && (
+                <span className="ml-1.5 text-[9px] bg-amber-500/20 text-amber-500 rounded px-1 py-0.5 font-bold">DEBT</span>
+              )}
+            </p>
+            {t.notes && (
+              <p className="text-xs text-muted-foreground truncate mt-0.5">{t.notes}</p>
+            )}
+          </div>
+        </div>
+
+        {/* Right: amount + actions */}
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <span className={cn(
+            'text-sm font-bold',
+            t.type === 'income' ? 'text-success' :
+            t.type === 'expense' ? 'text-destructive' : 'text-blue-500'
+          )}>
+            {t.type === 'income' ? '+' : t.type === 'expense' ? '-' : ''}{fmt(t.amount)}
+          </span>
+          <div className="flex gap-0.5">
+            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-primary" onClick={onEdit}>
+              <Pencil className="h-3 w-3" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-success" onClick={onCopy}>
+              <Copy className="h-3 w-3" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={onDelete}>
+              <Trash2 className="h-3 w-3" />
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom row: person · payment · account */}
+      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+        <span className="text-[11px] bg-muted/60 text-muted-foreground rounded-full px-2 py-0.5 font-medium">{t.person}</span>
+        <span className="text-[11px] bg-muted/60 text-muted-foreground rounded-full px-2 py-0.5 capitalize">{t.paymentMode}</span>
+        {accountName && (
+          <span className="text-[11px] bg-muted/60 text-muted-foreground rounded-full px-2 py-0.5">{accountName}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Grouped by date ───────────────────────────────────────────────────────
+
+function formatDateHeader(dateStr: string): string {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// ─── Main Page ─────────────────────────────────────────────────────────────
+
 export default function Transactions() {
   const { state, selectedYear, selectedMonth, deleteTransaction, updateTransaction, addTransaction } = useFinance();
   const [search, setSearch] = useState('');
@@ -181,22 +287,53 @@ export default function Transactions() {
   const [deleteTarget, setDeleteTarget] = useState<Transaction | null>(null);
   const today = new Date().toISOString().split('T')[0];
 
+  const hasActiveFilters = search || filterPerson !== 'all' || filterType !== 'all' || filterDate;
+
+  const clearAllFilters = () => {
+    setSearch('');
+    setFilterPerson('all');
+    setFilterType('all');
+    setFilterDate('');
+    setPage(1);
+  };
+
   const allTxns = useMemo(() => {
     let list = getMonthTransactions(state.transactions, selectedYear, selectedMonth);
     if (filterPerson !== 'all') list = list.filter(t => t.person === filterPerson);
     if (filterType !== 'all') list = list.filter(t => t.type === filterType);
     if (filterDate) list = list.filter(t => t.date === filterDate);
-    if (search) list = list.filter(t =>
-      t.category.toLowerCase().includes(search.toLowerCase()) ||
-      t.notes.toLowerCase().includes(search.toLowerCase()) ||
-      t.person.toLowerCase().includes(search.toLowerCase())
-    );
+    if (search) {
+      const q = search.toLowerCase();
+      list = list.filter(t =>
+        t.category.toLowerCase().includes(q) ||
+        (t.notes || '').toLowerCase().includes(q) ||
+        t.person.toLowerCase().includes(q) ||
+        String(t.amount).includes(q)
+      );
+    }
     return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [state.transactions, selectedYear, selectedMonth, filterPerson, filterType, filterDate, search]);
 
+  // Summary values
+  const totalIncome = allTxns.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+  const totalExpense = allTxns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+  const balance = totalIncome - totalExpense;
+
   const totalPages = Math.max(1, Math.ceil(allTxns.length / PAGE_SIZE));
-  const txns = allTxns.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const pagedTxns = allTxns.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const resetPage = () => setPage(1);
+
+  // Group paged transactions by date
+  const grouped = useMemo(() => {
+    const map = new Map<string, Transaction[]>();
+    for (const t of pagedTxns) {
+      const existing = map.get(t.date) || [];
+      existing.push(t);
+      map.set(t.date, existing);
+    }
+    // Return as sorted array of [date, txns]
+    return Array.from(map.entries()).sort((a, b) => new Date(b[0]).getTime() - new Date(a[0]).getTime());
+  }, [pagedTxns]);
 
   const handleSaveEdit = (fields: Partial<Transaction>) => {
     if (!editTarget) return;
@@ -222,26 +359,40 @@ export default function Transactions() {
         <MonthSelector />
       </div>
 
-      {/* Summary */}
-      <div className="grid grid-cols-3 gap-2">
-        {[
-          { label: 'Income', val: allTxns.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0), color: 'text-success', money: true },
-          { label: 'Expense', val: allTxns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0), color: 'text-destructive', money: true },
-          { label: 'Count', val: allTxns.length, color: 'text-foreground', money: false },
-        ].map(s => (
-          <div key={s.label} className="glass-card rounded-xl p-3 text-center">
-            <p className="text-xs text-muted-foreground mb-0.5">{s.label}</p>
-            <p className={cn('text-sm font-bold', s.color)}>{s.money ? fmt(s.val as number) : s.val}</p>
-          </div>
-        ))}
+      {/* Summary — 4 cards */}
+      <div className="grid grid-cols-4 gap-2">
+        <div className="glass-card rounded-xl p-2.5 text-center">
+          <p className="text-[10px] text-muted-foreground mb-0.5">Income</p>
+          <p className="text-xs font-bold text-success truncate">{fmt(totalIncome)}</p>
+        </div>
+        <div className="glass-card rounded-xl p-2.5 text-center">
+          <p className="text-[10px] text-muted-foreground mb-0.5">Expense</p>
+          <p className="text-xs font-bold text-destructive truncate">{fmt(totalExpense)}</p>
+        </div>
+        <div className="glass-card rounded-xl p-2.5 text-center">
+          <p className="text-[10px] text-muted-foreground mb-0.5">Balance</p>
+          <p className={cn('text-xs font-bold truncate', balance >= 0 ? 'text-success' : 'text-destructive')}>
+            {balance >= 0 ? '+' : ''}{fmt(balance)}
+          </p>
+        </div>
+        <div className="glass-card rounded-xl p-2.5 text-center">
+          <p className="text-[10px] text-muted-foreground mb-0.5">Count</p>
+          <p className="text-xs font-bold text-foreground">{allTxns.length}</p>
+        </div>
       </div>
 
       {/* Filters */}
       <div className="space-y-2">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input placeholder="Search…" value={search} onChange={e => { setSearch(e.target.value); resetPage(); }} className="pl-9" />
+          <Input
+            placeholder="Search by name, category, person, amount…"
+            value={search}
+            onChange={e => { setSearch(e.target.value); resetPage(); }}
+            className="pl-9"
+          />
         </div>
+
         <div className="flex gap-2">
           <Select value={filterPerson} onValueChange={v => { setFilterPerson(v); resetPage(); }}>
             <SelectTrigger className="flex-1"><SelectValue placeholder="Person" /></SelectTrigger>
@@ -260,58 +411,54 @@ export default function Transactions() {
             </SelectContent>
           </Select>
         </div>
+
         <div className="flex gap-2 items-center">
-          <Input type="date" value={filterDate} onChange={e => { setFilterDate(e.target.value); resetPage(); }} className="flex-1 text-sm" />
-          {filterDate && (
-            <Button size="sm" variant="ghost" onClick={() => { setFilterDate(''); resetPage(); }} className="text-xs text-muted-foreground shrink-0">
-              Clear
+          <Input
+            type="date"
+            value={filterDate}
+            onChange={e => { setFilterDate(e.target.value); resetPage(); }}
+            className="flex-1 text-sm"
+          />
+          {hasActiveFilters && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={clearAllFilters}
+              className="shrink-0 text-xs flex items-center gap-1 text-muted-foreground border-border/60"
+            >
+              <X className="h-3 w-3" />
+              Clear All
             </Button>
           )}
         </div>
       </div>
 
-      {/* List */}
-      <div className="space-y-2">
-        {txns.length === 0 ? (
+      {/* Grouped Transaction List */}
+      <div className="space-y-4">
+        {grouped.length === 0 ? (
           <div className="glass-card rounded-xl p-8 text-center">
             <p className="text-muted-foreground text-sm">No transactions found</p>
           </div>
-        ) : txns.map(t => (
-          <div key={t.id} className="glass-card rounded-xl p-3 flex items-center justify-between">
-            <div className="flex items-center gap-3 flex-1 min-w-0">
-              <div className={cn(
-                'h-10 w-10 rounded-full flex items-center justify-center text-xs font-bold shrink-0',
-                t.type === 'income' ? 'bg-success/15 text-success' :
-                t.type === 'expense' ? 'bg-destructive/15 text-destructive' : 'bg-info/15 text-info'
-              )}>
-                {t.type === 'transfer' ? '↔' : t.type === 'income' ? '↑' : '↓'}
-              </div>
-              <div className="min-w-0">
-
-                <p className="text-sm truncate">
-                  {t.notes && <p className="text-muted-foreground font-medium truncate">{t.notes}</p>}
-                  {t.category}
-                  {t.type === 'transfer' && t.transferTo ? ` → ${t.transferTo}` : ''}
-                  {t.homeOrDebt === 'debt' && <span className="ml-1 text-[10px] bg-warning/20 text-warning rounded px-1 py-0.5">DEBT</span>}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {t.person} · {new Date(t.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} · {t.paymentMode}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-1 shrink-0">
-              <span className={cn('text-sm font-semibold mr-1', t.type === 'income' ? 'text-success' : t.type === 'expense' ? 'text-destructive' : 'text-info')}>
-                {t.type === 'income' ? '+' : '-'}{fmt(t.amount)}
+        ) : grouped.map(([date, txns]) => (
+          <div key={date}>
+            {/* Date Header */}
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-xs font-semibold text-muted-foreground">
+                {formatDateHeader(date)}
               </span>
-              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-primary" onClick={() => setEditTarget(t)}>
-                <Pencil className="h-3 w-3" />
-              </Button>
-              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-success" onClick={() => setCopyTarget({ ...t, date: today })}>
-                <Copy className="h-3 w-3" />
-              </Button>
-              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => setDeleteTarget(t)}>
-                <Trash2 className="h-3 w-3" />
-              </Button>
+              <div className="flex-1 h-px bg-border/50" />
+            </div>
+            <div className="space-y-2">
+              {txns.map(t => (
+                <TxnCard
+                  key={t.id}
+                  t={t}
+                  fmt={fmt}
+                  onEdit={() => setEditTarget(t)}
+                  onCopy={() => setCopyTarget({ ...t, date: today })}
+                  onDelete={() => setDeleteTarget(t)}
+                />
+              ))}
             </div>
           </div>
         ))}
@@ -330,8 +477,12 @@ export default function Transactions() {
         </div>
       )}
 
-      {editTarget && <TxnDialog open={!!editTarget} onClose={() => setEditTarget(null)} initial={editTarget} mode="edit" onSave={handleSaveEdit} />}
-      {copyTarget && <TxnDialog open={!!copyTarget} onClose={() => setCopyTarget(null)} initial={copyTarget} mode="copy" onSave={handleSaveCopy} />}
+      {editTarget && (
+        <TxnDialog open={!!editTarget} onClose={() => setEditTarget(null)} initial={editTarget} mode="edit" onSave={handleSaveEdit} />
+      )}
+      {copyTarget && (
+        <TxnDialog open={!!copyTarget} onClose={() => setCopyTarget(null)} initial={copyTarget} mode="copy" onSave={handleSaveCopy} />
+      )}
 
       <AlertDialog open={!!deleteTarget} onOpenChange={o => { if (!o) setDeleteTarget(null); }}>
         <AlertDialogContent>
@@ -359,7 +510,14 @@ export default function Transactions() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { if (deleteTarget) { deleteTransaction(deleteTarget.id); toast.success('Deleted'); setDeleteTarget(null); } }} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
+            <AlertDialogAction
+              onClick={() => {
+                if (deleteTarget) { deleteTransaction(deleteTarget.id); toast.success('Deleted'); setDeleteTarget(null); }
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

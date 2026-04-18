@@ -11,7 +11,9 @@ C:\Users\ajaik\Desktop\realm-rich-reporter>node show-structure.js
 📄 package.json
 📄 postcss.config.js
 📁 public
+   📄 f.png
    📄 favicon.ico
+   📄 favicon1.ico
    📄 placeholder.svg
    📄 robots.txt
 📄 README.md
@@ -21,6 +23,7 @@ C:\Users\ajaik\Desktop\realm-rich-reporter>node show-structure.js
    📄 App.tsx
    📁 components
       📄 BottomNav.tsx
+      📄 BulkUploadTransactions.tsx
       📄 MonthSelector.tsx
       📄 NavLink.tsx
       📄 OverspendAnalytics.tsx
@@ -93,6 +96,7 @@ C:\Users\ajaik\Desktop\realm-rich-reporter>node show-structure.js
    📄 main.tsx
    📁 pages
       📄 BudgetPage.tsx
+      📄 BulkUploadPage.tsx
       📄 Dashboard.tsx
       📄 IncomePage.tsx
       📄 Index.tsx

@@ -1,52 +1,69 @@
 /**
  * AuthContext.tsx
- * Simple shared family login — no email, just User ID + Password.
- * Credentials live in .env so they're never in the codebase.
+ * Handles login/logout with localStorage token persistence.
+ * clearAuthToken is imported from LoginPage to clear on logout.
  */
 
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { createContext, useContext, useState, ReactNode } from 'react';
+
+const TOKEN_KEY = 'finance_auth_token';
+
+function clearAuthToken() {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+// ─── Credentials store ─────────────────────────────────────────────────────
+// Add / change credentials here
+const USERS: Record<string, string> = {
+  ajai: 'ajai123',
+  appa: 'appa123',
+  amma: 'amma123',
+  mauli: 'mauli123',
+  admin: 'admin123',
+};
+
+// ─── Types ─────────────────────────────────────────────────────────────────
 
 interface AuthContextType {
   isLoggedIn: boolean;
+  currentUser: string | null;
   login: (userId: string, password: string) => { success: boolean; error?: string };
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-const AUTH_KEY = 'family-finance-auth';
-const CORRECT_USER_ID = import.meta.env.VITE_APP_USER_ID || 'family';
-const CORRECT_PASSWORD = import.meta.env.VITE_APP_PASSWORD || 'finance2024';
+export function useAuth() {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error('useAuth must be used inside AuthProvider');
+  return ctx;
+}
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
-    // Persist login across page refreshes (sessionStorage clears on tab close)
-    return sessionStorage.getItem(AUTH_KEY) === 'true';
-  });
+// ─── Provider ──────────────────────────────────────────────────────────────
 
-  const login = useCallback((userId: string, password: string) => {
-    if (userId.trim() === CORRECT_USER_ID && password === CORRECT_PASSWORD) {
-      sessionStorage.setItem(AUTH_KEY, 'true');
-      setIsLoggedIn(true);
-      return { success: true };
-    }
-    return { success: false, error: 'Invalid User ID or Password' };
-  }, []);
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [currentUser, setCurrentUser] = useState<string | null>(null);
 
-  const logout = useCallback(() => {
-    sessionStorage.removeItem(AUTH_KEY);
+  const login = (userId: string, password: string): { success: boolean; error?: string } => {
+    const uid = userId.trim().toLowerCase();
+    const expected = USERS[uid];
+    if (!expected) return { success: false, error: 'User not found' };
+    if (expected !== password) return { success: false, error: 'Incorrect password' };
+    setIsLoggedIn(true);
+    setCurrentUser(uid);
+    return { success: true };
+  };
+
+  const logout = () => {
+    clearAuthToken();
     setIsLoggedIn(false);
-  }, []);
+    setCurrentUser(null);
+  };
 
   return (
-    <AuthContext.Provider value={{ isLoggedIn, login, logout }}>
+    <AuthContext.Provider value={{ isLoggedIn, currentUser, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
-  return ctx;
 }
