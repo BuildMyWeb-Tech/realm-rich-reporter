@@ -96,10 +96,10 @@ export default function Reports() {
           <span className={cn('w-20 tabular-nums text-right ml-4',
             bold ? '' : closing < 0 ? 'text-destructive' : '')}>{fmt(closing)}</span>
           {/* Difference — new column */}
-          <span className={cn('w-24 tabular-nums text-right ml-4 font-semibold',
+          {/* <span className={cn('w-24 tabular-nums text-right ml-4 font-semibold',
             diff > 0 ? 'text-success' : diff < 0 ? 'text-destructive' : 'text-muted-foreground')}>
             {diff > 0 ? `+${fmt(diff)}` : diff < 0 ? `-${fmt(Math.abs(diff))}` : '₹0'}
-          </span>
+          </span> */}
         </div>
       </div>
     );
@@ -374,7 +374,6 @@ ${buildExpenseTable('💳 Debt Expenses', debtExpCats, '#d97706')}
               <div className="flex gap-0">
                 <span className="w-20 text-right">Opening</span>
                 <span className="w-20 text-right ml-4">Closing</span>
-                <span className="w-24 text-right ml-4">Difference</span>
               </div>
             </div>
 

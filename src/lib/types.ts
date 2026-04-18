@@ -17,6 +17,7 @@ export const ACCOUNTS: Account[] = [
   // Appa
   { id: 'appa-cash', person: 'Appa', name: 'Appa Cash', type: 'cash' },
   { id: 'appa-sbi', person: 'Appa', name: 'Appa SBI', type: 'bank' },
+    { id: 'appa-ajai-sbi', person: 'Appa', name: 'Appa Ajai SBI', type: 'bank' },
   { id: 'appa-cnb', person: 'Appa', name: 'Appa CNB', type: 'bank' },
   // Amma
   { id: 'amma-cash', person: 'Amma', name: 'Amma Cash', type: 'cash' },
@@ -26,7 +27,6 @@ export const ACCOUNTS: Account[] = [
   { id: 'ajai-cnb', person: 'Ajai', name: 'Ajai CNB', type: 'bank' },
   { id: 'ajai-pnb', person: 'Ajai', name: 'Ajai PNB', type: 'bank' },
   // Shared
-  { id: 'appa-ajai-sbi', person: 'Appa', name: 'Appa Ajai SBI', type: 'bank' },
   // Mauli
   { id: 'mauli-cash', person: 'Mauli', name: 'Mauli Cash', type: 'cash' },
   { id: 'mauli-sbi', person: 'Mauli', name: 'Mauli SBI', type: 'bank' },
