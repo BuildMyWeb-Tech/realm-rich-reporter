@@ -11,6 +11,7 @@ import {
 } from '@/lib/types';
 import MonthSelector from '@/components/MonthSelector';
 import TransactionForm from '@/components/TransactionForm';
+import DataControls from '@/components/DataControls';
 import OverspendAnalytics from '@/components/OverspendAnalytics';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
@@ -105,113 +106,6 @@ export default function Reports() {
     );
   };
 
-  const downloadPDF = () => {
-    const monthLabel = `${MONTH_NAMES[selectedMonth]} ${selectedYear}`;
-    const overspentItems = expenseCategories.filter(c => c.overspent);
-
-    const tableStyle = `width:100%;border-collapse:collapse;font-size:11px;margin-bottom:16px;`;
-    const thStyle    = `background:#1e293b;color:#f1f5f9;padding:7px 10px;text-align:left;border:1px solid #334155;font-weight:600;`;
-    const thRStyle   = `${thStyle}text-align:right;`;
-    const tdStyle    = `padding:6px 10px;border:1px solid #e2e8f0;font-size:11px;`;
-    const tdRStyle   = `${tdStyle}text-align:right;`;
-    const trEven     = `background:#f8fafc;`;
-    const sTitle     = `font-size:13px;font-weight:700;color:#1e293b;margin:18px 0 8px;border-left:4px solid #6366f1;padding-left:8px;`;
-
-    const buildIncomeTable = (title: string, cats: string[], actuals: Record<string,number>, getExp: (c:string)=>number, acc: string) => {
-      let rows = ''; let tExp = 0, tAct = 0;
-      cats.forEach((cat, i) => {
-        const exp = getExp(cat); const act = actuals[cat] || 0; const bal = exp - act;
-        tExp += exp; tAct += act;
-        rows += `<tr style="${i%2===1?trEven:''}"><td style="${tdStyle}">${cat}</td>
-          <td style="${tdRStyle}">₹${exp.toLocaleString('en-IN')}</td>
-          <td style="${tdRStyle};color:${act>0?'#16a34a':'#94a3b8'}">₹${act.toLocaleString('en-IN')}</td>
-          <td style="${tdRStyle};color:${bal>0?'#d97706':'#16a34a'};font-weight:600;">
-            ${bal>=0?'-':'+'}₹${Math.abs(bal).toLocaleString('en-IN')}</td></tr>`;
-      });
-      const totBal = tExp - tAct;
-      return `<p style="${sTitle}">${title}</p>
-        <table style="${tableStyle}"><thead><tr>
-          <th style="${thStyle}">Source</th><th style="${thRStyle}">Expected</th>
-          <th style="${thRStyle}">Actual</th><th style="${thRStyle}">Balance</th>
-        </tr></thead><tbody>${rows}</tbody>
-        <tfoot><tr style="background:${acc}20;font-weight:700;">
-          <td style="${tdStyle};font-weight:700;">Total</td>
-          <td style="${tdRStyle};font-weight:700;">₹${tExp.toLocaleString('en-IN')}</td>
-          <td style="${tdRStyle};font-weight:700;color:#16a34a;">₹${tAct.toLocaleString('en-IN')}</td>
-          <td style="${tdRStyle};font-weight:700;color:${totBal>0?'#d97706':'#16a34a'};">
-            ${totBal>=0?'-':'+'}₹${Math.abs(totBal).toLocaleString('en-IN')}</td>
-        </tr></tfoot></table>`;
-    };
-
-    const buildExpenseTable = (title: string, cats: {category:string;budget:number;actual:number;remaining:number;overspent:boolean}[], acc: string) => {
-      let rows = ''; let tBudget = 0, tActual = 0;
-      cats.forEach((c, i) => {
-        tBudget += c.budget; tActual += c.actual;
-        rows += `<tr style="${i%2===1?trEven:''}"><td style="${tdStyle}">${c.overspent?'⚠️ ':''}${c.category}</td>
-          <td style="${tdRStyle}">₹${c.budget.toLocaleString('en-IN')}</td>
-          <td style="${tdRStyle};color:${c.actual>0?'#dc2626':'#94a3b8'}">₹${c.actual.toLocaleString('en-IN')}</td>
-          <td style="${tdRStyle};color:${c.remaining<0?'#dc2626':'#16a34a'};font-weight:600;">
-            ${c.remaining>=0?'₹'+c.remaining.toLocaleString('en-IN'):'-₹'+Math.abs(c.remaining).toLocaleString('en-IN')}</td></tr>`;
-      });
-      const rem = tBudget - tActual;
-      return `<p style="${sTitle}">${title}</p>
-        <table style="${tableStyle}"><thead><tr>
-          <th style="${thStyle}">Category</th><th style="${thRStyle}">Budget</th>
-          <th style="${thRStyle}">Actual</th><th style="${thRStyle}">Balance</th>
-        </tr></thead><tbody>${rows}</tbody>
-        <tfoot><tr style="background:${acc}20;font-weight:700;">
-          <td style="${tdStyle};font-weight:700;">Total</td>
-          <td style="${tdRStyle};font-weight:700;">₹${tBudget.toLocaleString('en-IN')}</td>
-          <td style="${tdRStyle};font-weight:700;color:#dc2626;">₹${tActual.toLocaleString('en-IN')}</td>
-          <td style="${tdRStyle};font-weight:700;color:${rem>=0?'#16a34a':'#dc2626'};">
-            ${rem>=0?'₹'+rem.toLocaleString('en-IN'):'-₹'+Math.abs(rem).toLocaleString('en-IN')}</td>
-        </tr></tfoot></table>`;
-    };
-
-    const debtExpCats = allDebtExpenseCategories.map(cat => {
-      const exp = getDebtExpExpected(cat); const act = debtActuals[cat] || 0;
-      return { category: cat, budget: exp, actual: act, remaining: exp - act, overspent: act > exp && exp > 0 };
-    });
-
-    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
-<title>Finance Report — ${monthLabel}</title>
-<style>*{margin:0;padding:0;box-sizing:border-box;}
-body{font-family:'Segoe UI',Arial,sans-serif;color:#1e293b;background:#fff;padding:32px;}
-@media print{body{padding:16px;}.no-print{display:none;}}
-.header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #6366f1;}
-.header h1{font-size:22px;color:#6366f1;font-weight:800;}
-.summary-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;}
-.summary-card{border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;}
-.summary-card .label{font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;}
-.summary-card .value{font-size:16px;font-weight:700;}
-.footer{margin-top:32px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:10px;color:#94a3b8;display:flex;justify-content:space-between;}
-.print-btn{background:#6366f1;color:white;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:13px;margin-bottom:20px;}
-</style></head><body>
-<button class="print-btn no-print" onclick="window.print()">🖨️ Print / Save as PDF</button>
-<div class="header">
-  <div><h1>Family Finance Tracker Report</h1><p>${monthLabel}</p></div>
-  <div style="text-align:right">
-    <p style="font-size:11px;color:#64748b;">Savings Rate</p>
-    <p style="font-size:20px;font-weight:800;color:${savingsRate>=20?'#16a34a':savingsRate>=0?'#d97706':'#dc2626'}">${savingsRate}%</p>
-  </div>
-</div>
-<div class="summary-grid">
-  <div class="summary-card"><div class="label">Total Income</div><div class="value" style="color:#16a34a;">₹${totals.income.toLocaleString('en-IN')}</div></div>
-  <div class="summary-card"><div class="label">Total Expense</div><div class="value" style="color:#dc2626;">₹${totals.expense.toLocaleString('en-IN')}</div></div>
-  <div class="summary-card"><div class="label">Net Balance</div><div class="value" style="color:${homeDebt.totalBalance>=0?'#16a34a':'#dc2626'};">₹${Math.abs(homeDebt.totalBalance).toLocaleString('en-IN')}</div></div>
-</div>
-${buildIncomeTable('🏠 Home Income', allHomeIncomeCategories, homeIncomeActuals, getIncomeExpected, '#16a34a')}
-${buildIncomeTable('💳 Debt Income', allDebtIncomeCategories, debtIncomeActuals, getIncomeExpected, '#d97706')}
-${buildExpenseTable('🏠 Home Expenses', expenseCategories, '#6366f1')}
-${buildExpenseTable('💳 Debt Expenses', debtExpCats, '#d97706')}
-<div class="footer"><span>Realm Rich Reporter · ${monthLabel}</span><span>Generated ${new Date().toLocaleString('en-IN')}</span></div>
-</body></html>`;
-
-    const win = window.open('', '_blank');
-    if (!win) { toast.error('Allow popups to open the PDF'); return; }
-    win.document.write(html); win.document.close();
-    toast.success('PDF opened — use Print → Save as PDF');
-  };
 
   return (
     <div className="pb-20 px-4 pt-4 max-w-lg mx-auto space-y-4 animate-slide-up">
@@ -220,12 +114,10 @@ ${buildExpenseTable('💳 Debt Expenses', debtExpCats, '#d97706')}
         <MonthSelector />
       </div>
 
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{MONTH_NAMES[selectedMonth]} {selectedYear}</p>
-        <Button size="sm" variant="outline" onClick={downloadPDF} className="gap-1.5 text-xs">
-          <FileDown className="h-3.5 w-3.5" /> Download PDF
-        </Button>
-      </div>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+  <p className="text-sm text-muted-foreground">{MONTH_NAMES[selectedMonth]} {selectedYear}</p>
+  <DataControls year={selectedYear} month={selectedMonth} />
+</div>
 
       {/* Tab switcher */}
       <div className="flex gap-1 bg-muted/30 rounded-xl p-1">

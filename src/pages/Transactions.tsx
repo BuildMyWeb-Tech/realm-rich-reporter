@@ -7,6 +7,7 @@ import {
 } from '@/lib/types';
 import MonthSelector from '@/components/MonthSelector';
 import TransactionForm from '@/components/TransactionForm';
+import DataControls from '@/components/DataControls';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -454,9 +455,12 @@ export default function Transactions() {
   return (
     <div className="pb-20 px-4 pt-4 max-w-lg mx-auto space-y-4 animate-slide-up">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-foreground">Transactions</h1>
-        <MonthSelector />
-      </div>
+  <h1 className="text-xl font-bold text-foreground">Transactions</h1>
+  <MonthSelector />
+</div>
+
+{/* ── Data Controls: Export / Import ── */}
+<DataControls />
 
       {/* Summary — 4 stat cards */}
       <div className="grid grid-cols-4 gap-2">
