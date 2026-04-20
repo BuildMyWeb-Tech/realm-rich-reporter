@@ -1,3 +1,11 @@
+/**
+ * BudgetPage.tsx — Updated with:
+ * ✅ Time range filter (Monthly / 3M / 6M / 9M / Yearly)
+ * ✅ Overall Usage bar → click → category breakdown
+ * ✅ AnalyticsCharts (pie + line) section
+ * ✅ All existing expand/collapse row behaviour preserved
+ */
+
 import { useState, useMemo } from 'react';
 import { useFinance } from '@/contexts/FinanceContext';
 import { getOverspendCategories, getMonthTransactions } from '@/lib/financial-store';
@@ -10,14 +18,15 @@ import { Progress } from '@/components/ui/progress';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { Pencil, Check, X, AlertTriangle, CheckCircle, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Pencil, Check, X, AlertTriangle, CheckCircle, AlertCircle, ChevronDown, ChevronUp, BarChart2 } from 'lucide-react';
 import type { Transaction } from '@/lib/types';
+import TimeRangeFilter, { TimeRange, getTransactionsForRange } from '@/components/TimeRangeFilter';
+import AnalyticsCharts from '@/components/AnalyticsCharts';
 
-// ── Mini transaction row shown in expanded category ─────────────────────────
+// ── Mini transaction row ─────────────────────────────────────────────────────
 function CategoryTxnRow({ t }: { t: Transaction }) {
   const fmt = (n: number) => `₹${n.toLocaleString('en-IN')}`;
   const accountName = t.accountId ? ACCOUNTS.find(a => a.id === t.accountId)?.name : null;
-
   return (
     <div className="flex items-center justify-between text-xs py-1.5 px-2 rounded-lg hover:bg-muted/20 border-b border-border/15 last:border-0">
       <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -43,34 +52,44 @@ function CategoryTxnRow({ t }: { t: Transaction }) {
 
 export default function BudgetPage() {
   const { state, selectedYear, selectedMonth, setBudget } = useFinance();
+  const [timeRange, setTimeRange] = useState<TimeRange>('monthly');
+  const [usageExpanded, setUsageExpanded] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
 
   const customExpense = state.expenseSources || [];
   const customHome = customExpense.filter(s => s.group === 'home');
   const customDebt = customExpense.filter(s => s.group === 'debt');
 
+  // For budget calculations — always use selected month (budgets are per-month)
   const categories = getOverspendCategories(state.transactions, state.budgets, selectedYear, selectedMonth);
 
+  // For transaction display — use time range
+  const rangeTxns = useMemo(
+    () => getTransactionsForRange(state.transactions, selectedYear, selectedMonth, timeRange),
+    [state.transactions, selectedYear, selectedMonth, timeRange],
+  );
+
+  // Monthly txns (for budget overspend — always per-month)
   const monthTxns = useMemo(
     () => getMonthTransactions(state.transactions, selectedYear, selectedMonth),
     [state.transactions, selectedYear, selectedMonth],
   );
 
-  // Build per-category transaction map (expenses only, home)
+  // Per-category txn map (uses range txns for display)
   const categoryTxnMap = useMemo(() => {
     const map: Record<string, Transaction[]> = {};
-    for (const t of monthTxns) {
+    for (const t of rangeTxns) {
       if (t.type !== 'expense') continue;
       if (!map[t.category]) map[t.category] = [];
       map[t.category].push(t);
     }
-    // Sort each bucket by date desc
     for (const cat in map) {
       map[cat].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     }
     return map;
-  }, [monthTxns]);
+  }, [rangeTxns]);
 
-  // Custom home expense categories
+  // Custom home expense categories (budget from per-month)
   const customHomeCategories = useMemo(() => {
     return customHome.map(s => {
       const actual = monthTxns
@@ -81,7 +100,7 @@ export default function BudgetPage() {
       const percent = budget > 0 ? (actual / budget) * 100 : 0;
       return { category: s.name, budget, actual, remaining, percent, overspent: actual > budget };
     });
-  }, [state, selectedYear, selectedMonth]);
+  }, [monthTxns, customHome]);
 
   const allHomeCategories = [...categories, ...customHomeCategories];
 
@@ -90,18 +109,17 @@ export default function BudgetPage() {
   const [expandedHomeCategory, setExpandedHomeCategory] = useState<string | null>(null);
   const [expandedDebtCategory, setExpandedDebtCategory] = useState<string | null>(null);
 
-  // Debt actuals
+  // Debt actuals (range)
   const debtActuals = useMemo(() => {
     const map: Record<string, number> = {};
-    for (const t of monthTxns) {
+    for (const t of rangeTxns) {
       if (t.type === 'expense' && t.homeOrDebt === 'debt')
         map[t.category] = (map[t.category] || 0) + t.amount;
     }
     return map;
-  }, [monthTxns]);
+  }, [rangeTxns]);
 
   const allDebtCats = [...DEBT_EXPENSE_CATEGORIES, ...customDebt.map(s => s.name)];
-
   const defaultDebtExpected = useMemo(() => {
     const map: Record<string, number> = { ...DEFAULT_EXPECTED_DEBT_EXPENSE };
     for (const s of customDebt) map[s.name] = s.defaultBudget;
@@ -120,7 +138,6 @@ export default function BudgetPage() {
     if (val >= 0) { setBudget(category, val, selectedYear, selectedMonth); toast.success(`Budget updated for ${category}`); }
     setEditing(null);
   };
-
   const handleSaveDebt = (cat: string) => {
     const val = Number(editDebtValue);
     if (val >= 0) { setDebtExpectedOverrides(m => ({ ...m, [cat]: val })); toast.success(`Expected updated for ${cat}`); }
@@ -128,21 +145,19 @@ export default function BudgetPage() {
   };
 
   // Totals
-  const homeExpected = allHomeCategories.reduce((s, c) => s + c.budget, 0);
-  const homeActual   = allHomeCategories.reduce((s, c) => s + c.actual, 0);
-  const homeBalance  = homeExpected - homeActual;
-
-  const debtExpected = allDebtCats.reduce((s, c) => s + getDebtExpected(c), 0);
-  const debtActual   = allDebtCats.reduce((s, c) => s + (debtActuals[c] || 0), 0);
-  const debtBalance  = debtExpected - debtActual;
-
+  const homeExpected  = allHomeCategories.reduce((s, c) => s + c.budget, 0);
+  const homeActual    = allHomeCategories.reduce((s, c) => s + c.actual, 0);
+  const homeBalance   = homeExpected - homeActual;
+  const debtExpected  = allDebtCats.reduce((s, c) => s + getDebtExpected(c), 0);
+  const debtActual    = allDebtCats.reduce((s, c) => s + (debtActuals[c] || 0), 0);
+  const debtBalance   = debtExpected - debtActual;
   const overallExpected = homeExpected + debtExpected;
   const overallActual   = homeActual + debtActual;
   const overallBalance  = overallExpected - overallActual;
-
-  const homeOverspend  = allHomeCategories.filter(c => c.overspent).reduce((s, c) => s + (c.actual - c.budget), 0);
-  const overspentCount = allHomeCategories.filter(c => c.overspent).length;
-  const nearLimitCount = allHomeCategories.filter(c => !c.overspent && c.percent >= 80).length;
+  const homeOverspend   = allHomeCategories.filter(c => c.overspent).reduce((s, c) => s + (c.actual - c.budget), 0);
+  const overspentCount  = allHomeCategories.filter(c => c.overspent).length;
+  const nearLimitCount  = allHomeCategories.filter(c => !c.overspent && c.percent >= 80).length;
+  const overallUsagePct = overallExpected > 0 ? Math.round((overallActual / overallExpected) * 100) : 0;
 
   const fmt    = (n: number) => `₹${n.toLocaleString('en-IN')}`;
   const fmtBal = (n: number) => n >= 0 ? fmt(n) : `-${fmt(Math.abs(n))}`;
@@ -153,11 +168,29 @@ export default function BudgetPage() {
     return <CheckCircle className="h-3.5 w-3.5 text-success shrink-0 opacity-50" />;
   };
 
+  // Category percentages for expanded usage breakdown
+  const categoryUsageBreakdown = useMemo(() => {
+    if (overallActual === 0) return [];
+    return allHomeCategories
+      .filter(c => c.actual > 0)
+      .sort((a, b) => b.actual - a.actual)
+      .map(c => ({
+        name: c.category,
+        amount: c.actual,
+        pct: Math.round((c.actual / overallActual) * 100),
+        overspent: c.overspent,
+      }));
+  }, [allHomeCategories, overallActual]);
+
   return (
     <div className="pb-20 px-2 sm:px-4 pt-4 max-w-2xl mx-auto space-y-4 animate-slide-up">
-      <div className="flex items-center justify-between px-2">
+      {/* Header */}
+      <div className="flex items-center justify-between px-2 gap-2 flex-wrap">
         <h1 className="text-xl font-bold text-foreground">Expenses</h1>
-        <MonthSelector />
+        <div className="flex items-center gap-2">
+          <TimeRangeFilter value={timeRange} onChange={setTimeRange} />
+          <MonthSelector />
+        </div>
       </div>
 
       {/* TOP 3 SUMMARY CARDS */}
@@ -180,34 +213,92 @@ export default function BudgetPage() {
         </div>
       </div>
 
-      {/* Overall progress */}
+      {/* ── Overall Usage — CLICKABLE for category breakdown ── */}
       <div className="glass-card rounded-xl p-4 mx-2">
-        <div className="flex justify-between items-center mb-2">
-          <span className="text-xs text-muted-foreground">Overall Usage</span>
-          <span className="text-xs font-semibold">
-            {overallExpected > 0 ? Math.round((overallActual / overallExpected) * 100) : 0}%
-          </span>
-        </div>
-        <Progress
-          value={overallExpected > 0 ? Math.min((overallActual / overallExpected) * 100, 100) : 0}
-          className={cn('h-2.5', overallActual > overallExpected ? '[&>div]:bg-destructive' : '[&>div]:bg-primary')}
-        />
-        <div className="flex gap-4 mt-2 text-xs flex-wrap">
-          {overspentCount > 0 && (
-            <span className="text-destructive font-medium flex items-center gap-1">
-              <AlertCircle className="h-3 w-3" />{overspentCount} overspent
-            </span>
-          )}
-          {nearLimitCount > 0 && (
-            <span className="text-warning font-medium flex items-center gap-1">
-              <AlertTriangle className="h-3 w-3" />{nearLimitCount} near limit
-            </span>
-          )}
-          {homeOverspend > 0 && (
-            <span className="text-destructive font-medium ml-auto">Over by {fmt(homeOverspend)}</span>
-          )}
-        </div>
+        <button
+          className="w-full text-left"
+          onClick={() => setUsageExpanded(o => !o)}
+        >
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-xs text-muted-foreground">Overall Usage</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold">{overallUsagePct}%</span>
+              {usageExpanded
+                ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+                : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+            </div>
+          </div>
+          <Progress
+            value={Math.min(overallUsagePct, 100)}
+            className={cn('h-2.5', overallActual > overallExpected ? '[&>div]:bg-destructive' : '[&>div]:bg-primary')}
+          />
+          <div className="flex gap-4 mt-2 text-xs flex-wrap">
+            {overspentCount > 0 && (
+              <span className="text-destructive font-medium flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" />{overspentCount} overspent
+              </span>
+            )}
+            {nearLimitCount > 0 && (
+              <span className="text-warning font-medium flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3" />{nearLimitCount} near limit
+              </span>
+            )}
+            {homeOverspend > 0 && (
+              <span className="text-destructive font-medium ml-auto">Over by {fmt(homeOverspend)}</span>
+            )}
+          </div>
+        </button>
+
+        {/* Expanded category breakdown */}
+        {usageExpanded && categoryUsageBreakdown.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-border/40 space-y-2">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+              Category Breakdown
+            </p>
+            {categoryUsageBreakdown.map(c => (
+              <div key={c.name}>
+                <div className="flex items-center justify-between text-xs mb-1">
+                  <span className={cn('font-medium', c.overspent ? 'text-destructive' : 'text-foreground')}>
+                    {c.name}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground tabular-nums">{fmt(c.amount)}</span>
+                    <span className={cn('font-bold w-9 text-right', c.overspent ? 'text-destructive' : 'text-foreground')}>
+                      {c.pct}%
+                    </span>
+                  </div>
+                </div>
+                <Progress
+                  value={c.pct}
+                  className={cn('h-1.5', c.overspent ? '[&>div]:bg-destructive' : '[&>div]:bg-primary')}
+                />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+
+      {/* Analytics toggle */}
+      <div className="px-2">
+        <button
+          onClick={() => setShowAnalytics(o => !o)}
+          className={cn(
+            'w-full rounded-xl border px-4 py-2.5 text-xs font-semibold flex items-center justify-center gap-2 transition-all',
+            showAnalytics
+              ? 'bg-primary/10 border-primary/30 text-primary'
+              : 'border-border/40 text-muted-foreground hover:border-primary/30 hover:text-primary',
+          )}
+        >
+          <BarChart2 className="h-3.5 w-3.5" />
+          {showAnalytics ? 'Hide Analytics' : 'Show Analytics'}
+        </button>
+      </div>
+
+      {showAnalytics && (
+        <div className="px-2">
+          <AnalyticsCharts timeRange={timeRange} />
+        </div>
+      )}
 
       {/* ── HOME EXPENSE TABLE ── */}
       <div className="glass-card rounded-xl p-4 mx-2 overflow-x-auto">
@@ -238,7 +329,6 @@ export default function BudgetPage() {
 
               return (
                 <div key={c.category}>
-                  {/* Main row — clickable */}
                   <button
                     className={cn(
                       'w-full rounded-lg px-2 py-2 transition-colors text-left',
@@ -273,24 +363,20 @@ export default function BudgetPage() {
                           {fmt(c.budget)}<Pencil className="h-2.5 w-2.5 opacity-0 group-hover:opacity-60" />
                         </button>
                       )}
-                      <span className={cn('w-24 text-right text-xs font-semibold shrink-0',
-                        c.actual > 0 ? 'text-foreground' : 'text-muted-foreground')}>
+                      <span className={cn('w-24 text-right text-xs font-semibold shrink-0', c.actual > 0 ? 'text-foreground' : 'text-muted-foreground')}>
                         {fmt(c.actual)}
                       </span>
                       <span className={cn('w-24 text-right text-xs font-bold shrink-0',
                         c.remaining < 0 ? 'text-destructive' : c.remaining < c.budget * 0.2 ? 'text-warning' : 'text-success')}>
                         {fmtBal(c.remaining)}
                       </span>
-                      <span className={cn('w-20 text-right text-xs font-bold shrink-0',
-                        overspendAmt > 0 ? 'text-destructive' : 'text-muted-foreground')}>
+                      <span className={cn('w-20 text-right text-xs font-bold shrink-0', overspendAmt > 0 ? 'text-destructive' : 'text-muted-foreground')}>
                         {overspendAmt > 0 ? fmt(overspendAmt) : '—'}
                       </span>
                       <div className="w-4 shrink-0 flex justify-center">
-                        {txns.length > 0 && (
-                          isExpanded
-                            ? <ChevronUp className="h-3 w-3 text-muted-foreground" />
-                            : <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                        )}
+                        {txns.length > 0 && (isExpanded
+                          ? <ChevronUp className="h-3 w-3 text-muted-foreground" />
+                          : <ChevronDown className="h-3 w-3 text-muted-foreground" />)}
                       </div>
                     </div>
                     <div className="mt-1.5 ml-8 mr-4">
@@ -301,7 +387,6 @@ export default function BudgetPage() {
                     </div>
                   </button>
 
-                  {/* Expanded transactions panel */}
                   {isExpanded && (
                     <div className={cn(
                       'ml-2 mr-2 mb-1 rounded-b-lg border border-t-0 px-3 py-2',
@@ -332,7 +417,6 @@ export default function BudgetPage() {
             })}
           </div>
 
-          {/* Home Total Row */}
           <div className="flex items-center gap-3 px-2 pt-3 mt-2 border-t border-border/50 text-xs font-bold bg-muted/30 rounded-lg py-2">
             <span className="w-5 shrink-0" />
             <span className="flex-1 min-w-[100px]">Total Home Expenses</span>
@@ -418,27 +502,23 @@ export default function BudgetPage() {
                           {fmt(exp)}<Pencil className="h-2.5 w-2.5 opacity-0 group-hover:opacity-60" />
                         </button>
                       )}
-                      <span className={cn('w-24 text-right text-xs font-semibold shrink-0',
-                        actual > 0 ? 'text-foreground' : 'text-muted-foreground')}>
+                      <span className={cn('w-24 text-right text-xs font-semibold shrink-0', actual > 0 ? 'text-foreground' : 'text-muted-foreground')}>
                         {fmt(actual)}
                       </span>
-                      <span className={cn('w-24 text-right text-xs font-bold shrink-0',
-                        bal >= 0 ? 'text-success' : 'text-destructive')}>{fmtBal(bal)}</span>
-                      <span className={cn('w-20 text-right text-xs font-bold shrink-0',
-                        overspendAmt > 0 ? 'text-destructive' : 'text-muted-foreground')}>
+                      <span className={cn('w-24 text-right text-xs font-bold shrink-0', bal >= 0 ? 'text-success' : 'text-destructive')}>
+                        {fmtBal(bal)}
+                      </span>
+                      <span className={cn('w-20 text-right text-xs font-bold shrink-0', overspendAmt > 0 ? 'text-destructive' : 'text-muted-foreground')}>
                         {overspendAmt > 0 ? fmt(overspendAmt) : '—'}
                       </span>
                       <div className="w-4 shrink-0 flex justify-center">
-                        {txns.length > 0 && (
-                          isExpanded
-                            ? <ChevronUp className="h-3 w-3 text-muted-foreground" />
-                            : <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                        )}
+                        {txns.length > 0 && (isExpanded
+                          ? <ChevronUp className="h-3 w-3 text-muted-foreground" />
+                          : <ChevronDown className="h-3 w-3 text-muted-foreground" />)}
                       </div>
                     </div>
                   </button>
 
-                  {/* Expanded panel for debt category */}
                   {isExpanded && (
                     <div className={cn(
                       'ml-2 mr-2 mb-1 rounded-b-lg border border-t-0 px-3 py-2',
@@ -467,7 +547,6 @@ export default function BudgetPage() {
             })}
           </div>
 
-          {/* Debt Total Row */}
           <div className="flex items-center gap-3 px-2 pt-3 mt-2 border-t border-border/50 text-xs font-bold bg-muted/30 rounded-lg py-2">
             <span className="w-5 shrink-0" />
             <span className="flex-1 min-w-[100px]">Total Debt Expenses</span>

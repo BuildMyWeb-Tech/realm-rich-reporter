@@ -1,6 +1,7 @@
 C:\Users\ajaik\Desktop\realm-rich-reporter>node show-structure.js
 📄 .env
-📁 .git📄 .gitignore
+📁 .git
+📄 .gitignore
 📄 bun.lock
 📄 bun.lockb
 📄 components.json
@@ -24,6 +25,8 @@ C:\Users\ajaik\Desktop\realm-rich-reporter>node show-structure.js
    📁 components
       📄 BottomNav.tsx
       📄 BulkUploadTransactions.tsx
+      📄 DataControls.tsx
+      📄 ImportExcelModal.tsx
       📄 MonthSelector.tsx
       📄 NavLink.tsx
       📄 OverspendAnalytics.tsx
@@ -87,7 +90,11 @@ C:\Users\ajaik\Desktop\realm-rich-reporter>node show-structure.js
       📄 use-toast.ts
    📄 index.css
    📁 lib
+      📄 detectFinancialIssues.ts
+      📄 excel-export.ts
+      📄 excel-import.ts
       📄 financial-store.ts
+      📄 pdf-export.ts
       📄 recurring-engine.ts
       📄 supabase-store.ts
       📄 supabase.ts
@@ -109,10 +116,13 @@ C:\Users\ajaik\Desktop\realm-rich-reporter>node show-structure.js
    📁 test
       📄 example.test.ts
       📄 setup.ts
+   📁 types
+      📄 jspdf-autotable.d.ts
    📄 vite-env.d.ts
 📄 tailwind.config.ts
 📄 tsconfig.app.json
 📄 tsconfig.json
 📄 tsconfig.node.json
+📄 vercel.json
 📄 vite.config.ts
 📄 vitest.config.ts

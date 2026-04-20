@@ -1,3 +1,10 @@
+/**
+ * MonthSelector.tsx — Updated.
+ * - Clicking the YEAR number opens YearView popup (new feature).
+ * - Calendar icon opens the existing month picker.
+ * - Left/Right arrows navigate months as before.
+ */
+
 import { useState } from 'react';
 import { useFinance } from '@/contexts/FinanceContext';
 import { MONTH_NAMES } from '@/lib/types';
@@ -6,10 +13,12 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { getMonthTransactions } from '@/lib/financial-store';
 import { cn } from '@/lib/utils';
+import YearView from './YearView';
 
 export default function MonthSelector() {
   const { selectedYear, selectedMonth, setSelectedYear, setSelectedMonth, state } = useFinance();
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const [yearViewOpen, setYearViewOpen] = useState(false);
   const [viewYear, setViewYear] = useState(selectedYear);
 
   const prev = () => {
@@ -60,12 +69,24 @@ export default function MonthSelector() {
         <Button variant="ghost" size="icon" onClick={prev} className="h-8 w-8">
           <ChevronLeft className="h-4 w-4" />
         </Button>
+
+        {/* Month name — clicks to today */}
         <button
           onClick={goToday}
-          className="text-sm font-semibold text-foreground hover:text-primary transition-colors min-w-[110px] text-center"
+          className="text-sm font-semibold text-foreground hover:text-primary transition-colors"
         >
-          {MONTH_NAMES[selectedMonth]} {selectedYear}
+          {MONTH_NAMES[selectedMonth]}
         </button>
+
+        {/* Year — click to open YearView */}
+        <button
+          onClick={() => { setYearViewOpen(true); }}
+          className="text-sm font-semibold text-primary hover:text-primary/70 transition-colors underline-offset-2 hover:underline"
+          title="Open yearly calendar"
+        >
+          {selectedYear}
+        </button>
+
         <Button variant="ghost" size="icon" onClick={next} className="h-8 w-8">
           <ChevronRight className="h-4 w-4" />
         </Button>
@@ -74,13 +95,20 @@ export default function MonthSelector() {
           size="icon"
           onClick={() => { setViewYear(selectedYear); setCalendarOpen(true); }}
           className="h-8 w-8 text-muted-foreground hover:text-primary"
-          title="Year calendar view"
+          title="Month picker"
         >
           <Calendar className="h-3.5 w-3.5" />
         </Button>
       </div>
 
-      {/* Yearly Calendar Grid Modal */}
+      {/* ── YearView popup ─────────────────────────────────────────────────── */}
+      <YearView
+        open={yearViewOpen}
+        onClose={() => setYearViewOpen(false)}
+        initialYear={selectedYear}
+      />
+
+      {/* ── Month picker (existing behaviour, unchanged) ───────────────────── */}
       <Dialog open={calendarOpen} onOpenChange={setCalendarOpen}>
         <DialogContent className="max-w-lg mx-auto max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -89,19 +117,11 @@ export default function MonthSelector() {
                 📅 Yearly Calendar — {viewYear}
               </DialogTitle>
               <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost" size="icon"
-                  onClick={() => setViewYear(v => v - 1)}
-                  className="h-7 w-7"
-                >
+                <Button variant="ghost" size="icon" onClick={() => setViewYear(v => v - 1)} className="h-7 w-7">
                   <ChevronLeft className="h-3.5 w-3.5" />
                 </Button>
                 <span className="text-sm font-bold text-primary w-12 text-center">{viewYear}</span>
-                <Button
-                  variant="ghost" size="icon"
-                  onClick={() => setViewYear(v => v + 1)}
-                  className="h-7 w-7"
-                >
+                <Button variant="ghost" size="icon" onClick={() => setViewYear(v => v + 1)} className="h-7 w-7">
                   <ChevronRight className="h-3.5 w-3.5" />
                 </Button>
               </div>
@@ -154,26 +174,18 @@ export default function MonthSelector() {
                         : hasData
                           ? 'border-border/50 bg-card/50 hover:border-primary/40 hover:bg-primary/5'
                           : 'border-border/30 bg-muted/20 hover:border-border/60',
-                    'active:scale-95'
+                    'active:scale-95',
                   )}
                 >
-                  {/* Month name */}
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className={cn(
-                      'text-xs font-bold',
-                      selected ? 'text-primary' : current ? 'text-success' : 'text-foreground'
-                    )}>
+                    <span className={cn('text-xs font-bold',
+                      selected ? 'text-primary' : current ? 'text-success' : 'text-foreground')}>
                       {name.slice(0, 3)}
                     </span>
-                    {current && (
-                      <span className="text-[8px] bg-success/20 text-success rounded-full px-1 font-semibold">NOW</span>
-                    )}
-                    {selected && !current && (
-                      <span className="text-[8px] bg-primary/20 text-primary rounded-full px-1 font-semibold">SEL</span>
-                    )}
+                    {current && <span className="text-[8px] bg-success/20 text-success rounded-full px-1 font-semibold">NOW</span>}
+                    {selected && !current && <span className="text-[8px] bg-primary/20 text-primary rounded-full px-1 font-semibold">SEL</span>}
                   </div>
 
-                  {/* Data indicators */}
                   {hasData ? (
                     <div className="space-y-0.5">
                       <div className="flex items-center gap-1">
@@ -184,10 +196,7 @@ export default function MonthSelector() {
                         <TrendingDown className="h-2.5 w-2.5 text-destructive shrink-0" />
                         <span className="text-[10px] text-destructive font-medium truncate">₹{fmt(summary.expense)}</span>
                       </div>
-                      <div className={cn(
-                        'text-[10px] font-bold',
-                        summary.net >= 0 ? 'text-success' : 'text-destructive'
-                      )}>
+                      <div className={cn('text-[10px] font-bold', summary.net >= 0 ? 'text-success' : 'text-destructive')}>
                         {summary.net >= 0 ? '+' : ''}₹{fmt(Math.abs(summary.net))}
                       </div>
                     </div>
@@ -195,7 +204,6 @@ export default function MonthSelector() {
                     <p className="text-[10px] text-muted-foreground/50 mt-1">No data</p>
                   )}
 
-                  {/* Transaction count badge */}
                   {summary.count > 0 && (
                     <div className="absolute top-1.5 right-1.5 text-[9px] bg-muted/60 text-muted-foreground rounded-full px-1 min-w-[14px] text-center">
                       {summary.count}
@@ -205,15 +213,6 @@ export default function MonthSelector() {
               );
             })}
           </div>
-
-          {/* Carry-forward notice */}
-          {/* <div className="mt-3 p-3 rounded-xl bg-primary/5 border border-primary/15">
-            <p className="text-[11px] text-muted-foreground">
-              <span className="font-semibold text-primary">↩ Auto Carry-Forward:</span>{' '}
-              Each month's closing balance automatically becomes the next month's opening balance.
-              Jan ending → Feb opening. Navigate months to see the flow.
-            </p>
-          </div> */}
         </DialogContent>
       </Dialog>
     </>
