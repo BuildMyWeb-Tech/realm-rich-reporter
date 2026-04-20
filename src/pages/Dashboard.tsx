@@ -1,18 +1,28 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useFinance } from '@/contexts/FinanceContext';
 import {
   getTotalBalance, getOverspendCategories, getMonthTransactions,
   getAccountBalance, getHomeDebtSummary,
 } from '@/lib/financial-store';
-import { getCashAccounts, getBankAccounts, MONTH_NAMES } from '@/lib/types';
+import { getCashAccounts, getBankAccounts, MONTH_NAMES, ACCOUNTS } from '@/lib/types';
 import MonthSelector from '@/components/MonthSelector';
 import TransactionForm from '@/components/TransactionForm';
 import { Progress } from '@/components/ui/progress';
 import {
   TrendingUp, TrendingDown, Wallet,
-  AlertTriangle, Home, CreditCard, AlertCircle,
+  AlertTriangle, Home, CreditCard, AlertCircle, Landmark,
+  ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { detectFinancialIssues } from '@/lib/detectFinancialIssues';
+import { useState } from 'react';
+
+// ── Real balance diff (from Reports page localStorage) ───────────────────────
+const REAL_BAL_KEY = 'finance-real-balances';
+function loadRealBalances(): Record<string, number> {
+  try { return JSON.parse(localStorage.getItem(REAL_BAL_KEY) || '{}'); }
+  catch { return {}; }
+}
 
 export default function Dashboard() {
   const { state, selectedYear, selectedMonth, missingMoneyLog, logMissingMoney } = useFinance();
@@ -31,22 +41,35 @@ export default function Dashboard() {
   const cashAccounts = getCashAccounts();
   const bankAccounts = getBankAccounts();
 
-  // Per-account closing balances for the selected month
-  const totalCashClosing = cashAccounts.reduce(
-    (s, a) => s + getAccountBalance(state.transactions, a.id, selectedYear, selectedMonth, state.accountBalances).closing,
-    0,
-  );
-  const totalOnlineClosing = bankAccounts.reduce(
-    (s, a) => s + getAccountBalance(state.transactions, a.id, selectedYear, selectedMonth, state.accountBalances).closing,
-    0,
-  );
+  const getAccBal = (id: string) =>
+    getAccountBalance(state.transactions, id, selectedYear, selectedMonth, state.accountBalances);
+
+  // Opening balance = sum of all account opening balances for the selected month
+  const openingBalance = useMemo(() => {
+    return ACCOUNTS.reduce((sum, acc) => sum + getAccBal(acc.id).opening, 0);
+  }, [state.transactions, state.accountBalances, selectedYear, selectedMonth]);
+
+  const totalCashClosing = cashAccounts.reduce((s, a) => s + getAccBal(a.id).closing, 0);
+  const totalOnlineClosing = bankAccounts.reduce((s, a) => s + getAccBal(a.id).closing, 0);
   const overallClosing = totalCashClosing + totalOnlineClosing;
 
-  // Missing money = gap between calculated closing and sum of all account closings
+  // Missing money from account sum vs calculated closing
   const missingAmount = Math.round(Math.abs(totals.closing - overallClosing));
 
-  // FIX: include logMissingMoney in deps so the callback reference is stable.
-  // Always log (even 0) so resolved missing money clears old entries.
+  // Missing money from Reports real-balance diff
+  const realBalances = useMemo(() => loadRealBalances(), []);
+  const reportsMissingMoney = useMemo(() => {
+    let total = 0;
+    for (const acc of ACCOUNTS) {
+      const closing = getAccBal(acc.id).closing;
+      const real = realBalances[acc.id];
+      if (real !== undefined) {
+        total += real - closing; // positive = extra, negative = missing
+      }
+    }
+    return Math.round(total);
+  }, [state.transactions, state.accountBalances, selectedYear, selectedMonth, realBalances]);
+
   useEffect(() => {
     const today = new Date().toISOString().split('T')[0];
     logMissingMoney(today, missingAmount);
@@ -57,7 +80,19 @@ export default function Dashboard() {
     ? Math.round(((totals.income - totals.expense) / totals.income) * 100)
     : 0;
 
+  // Issues
+  const issues = useMemo(
+    () => detectFinancialIssues(state.transactions, state.accountBalances),
+    [state.transactions, state.accountBalances],
+  );
+  const [issuesOpen, setIssuesOpen] = useState(false);
+
   const fmt = (n: number) => `₹${Math.abs(n).toLocaleString('en-IN')}`;
+
+  const severityColor = (s: string) =>
+    s === 'error' ? 'text-destructive' : s === 'warning' ? 'text-warning' : 'text-muted-foreground';
+  const severityBg = (s: string) =>
+    s === 'error' ? 'bg-destructive/8' : s === 'warning' ? 'bg-warning/8' : 'bg-muted/30';
 
   return (
     <div className="pb-20 px-4 pt-4 max-w-lg mx-auto space-y-4 animate-slide-up">
@@ -71,27 +106,45 @@ export default function Dashboard() {
         {MONTH_NAMES[selectedMonth]} {selectedYear}
       </p>
 
-      {/* Stats Grid */}
+      {/* ── Stats Grid: Opening | Income | Expenses | Balance ── */}
       <div className="grid grid-cols-2 gap-3">
-        {[
-          { label: 'Income',   value: totals.income,  icon: TrendingUp,   color: 'bg-success' },
-          { label: 'Expenses', value: totals.expense, icon: TrendingDown,  color: 'gradient-danger' },
-          { label: 'Balance',  value: totals.closing, icon: Wallet,        color: 'gradient-primary' },
-        ].map(s => (
-          <div key={s.label} className={cn('stat-card rounded-xl text-primary-foreground', s.color)}>
-            <div className="flex items-center gap-2 mb-1">
-              <s.icon className="h-4 w-4 opacity-80" />
-              <span className="text-xs opacity-90">{s.label}</span>
-            </div>
-            {/* FIX: income and expense are always positive (Math.abs via normalizeTransaction).
-                Balance (closing) can be negative — show sign explicitly. */}
-            <p className="text-lg font-bold">
-              {s.label === 'Balance'
-                ? `${totals.closing >= 0 ? '' : '-'}${fmt(totals.closing)}`
-                : fmt(s.value)}
-            </p>
+        {/* Opening */}
+        <div className="glass-card rounded-xl p-3 bg-muted/40">
+          <div className="flex items-center gap-2 mb-1">
+            <Landmark className="h-4 w-4 opacity-70 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Opening</span>
           </div>
-        ))}
+          <p className="text-lg font-bold text-foreground">{fmt(openingBalance)}</p>
+        </div>
+
+        {/* Income */}
+        <div className="stat-card rounded-xl text-primary-foreground bg-success">
+          <div className="flex items-center gap-2 mb-1">
+            <TrendingUp className="h-4 w-4 opacity-80" />
+            <span className="text-xs opacity-90">Income</span>
+          </div>
+          <p className="text-lg font-bold">{fmt(totals.income)}</p>
+        </div>
+
+        {/* Expenses */}
+        <div className="stat-card rounded-xl text-primary-foreground gradient-danger">
+          <div className="flex items-center gap-2 mb-1">
+            <TrendingDown className="h-4 w-4 opacity-80" />
+            <span className="text-xs opacity-90">Expenses</span>
+          </div>
+          <p className="text-lg font-bold">{fmt(totals.expense)}</p>
+        </div>
+
+        {/* Balance */}
+        <div className="stat-card rounded-xl text-primary-foreground gradient-primary">
+          <div className="flex items-center gap-2 mb-1">
+            <Wallet className="h-4 w-4 opacity-80" />
+            <span className="text-xs opacity-90">Balance</span>
+          </div>
+          <p className="text-lg font-bold">
+            {totals.closing >= 0 ? '' : '-'}{fmt(totals.closing)}
+          </p>
+        </div>
       </div>
 
       {/* Savings Rate */}
@@ -126,8 +179,6 @@ export default function Dashboard() {
       <div className="glass-card rounded-xl p-4">
         <h2 className="text-sm font-semibold text-foreground mb-3">Monthly Breakdown</h2>
         <div className="grid grid-cols-2 gap-3">
-
-          {/* Home */}
           <div className="rounded-xl bg-success/8 p-3">
             <div className="flex items-center gap-1.5 mb-2">
               <Home className="h-3.5 w-3.5 text-success" />
@@ -150,8 +201,6 @@ export default function Dashboard() {
               </div>
             </div>
           </div>
-
-          {/* Debt */}
           <div className="rounded-xl bg-warning/8 p-3">
             <div className="flex items-center gap-1.5 mb-2">
               <CreditCard className="h-3.5 w-3.5 text-warning" />
@@ -175,8 +224,6 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
-
-        {/* Totals row */}
         <div className="mt-3 pt-3 border-t border-border/40 grid grid-cols-3 gap-2 text-xs text-center">
           <div>
             <p className="text-muted-foreground mb-0.5">Total Income</p>
@@ -195,7 +242,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Missing Money */}
+      {/* ── Missing Money (account reconciliation) ── */}
       <div className={cn('glass-card rounded-xl p-4', missingAmount > 0 ? 'border border-destructive/30' : '')}>
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
@@ -211,6 +258,21 @@ export default function Dashboard() {
             Calculated: {fmt(totals.closing)} · Accounts: {fmt(overallClosing)}
           </p>
         )}
+
+        {/* Reports real-balance missing money */}
+        {reportsMissingMoney !== 0 && (
+          <div className={cn(
+            'mt-2 rounded-lg px-3 py-2 text-xs flex justify-between items-center',
+            reportsMissingMoney < 0 ? 'bg-destructive/10' : 'bg-warning/10',
+          )}>
+            <span className="text-muted-foreground">Real Balance Difference</span>
+            <span className={cn('font-bold', reportsMissingMoney < 0 ? 'text-destructive' : 'text-warning')}>
+              {reportsMissingMoney > 0 ? '+' : ''}{fmt(reportsMissingMoney)}
+              {reportsMissingMoney < 0 ? ' missing' : ' extra'}
+            </span>
+          </div>
+        )}
+
         {missingLog.length > 0 && (
           <div className="mt-2 pt-2 border-t border-border/40">
             <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">History</p>
@@ -221,9 +283,7 @@ export default function Dashboard() {
                 return (
                   <div key={entry.date} className="flex items-center justify-between text-xs">
                     <span className="text-muted-foreground">
-                      {new Date(entry.date).toLocaleDateString('en-IN', {
-                        day: 'numeric', month: 'short', year: '2-digit',
-                      })}
+                      {new Date(entry.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' })}
                     </span>
                     <div className="flex items-center gap-2">
                       {diff !== null && diff !== 0 && (
@@ -240,6 +300,54 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* ── Issues Panel ── */}
+      {issues.length > 0 && (
+        <div className={cn(
+          'glass-card rounded-xl p-4',
+          issues.some(i => i.severity === 'error') ? 'border border-destructive/30' : 'border border-warning/30',
+        )}>
+          <button
+            className="w-full flex items-center justify-between"
+            onClick={() => setIssuesOpen(o => !o)}
+          >
+            <h2 className="text-sm font-semibold flex items-center gap-2">
+              <AlertTriangle className={cn('h-4 w-4',
+                issues.some(i => i.severity === 'error') ? 'text-destructive' : 'text-warning')} />
+              Financial Issues
+              <span className={cn(
+                'text-[10px] font-bold rounded-full px-2 py-0.5',
+                issues.some(i => i.severity === 'error') ? 'bg-destructive/20 text-destructive' : 'bg-warning/20 text-warning',
+              )}>
+                {issues.length}
+              </span>
+            </h2>
+            {issuesOpen
+              ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+              : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+          </button>
+
+          {issuesOpen && (
+            <div className="mt-3 space-y-2">
+              {issues.map(issue => (
+                <div
+                  key={issue.id}
+                  className={cn('rounded-lg p-3 text-xs space-y-1', severityBg(issue.severity))}
+                >
+                  <div className="flex items-start gap-1.5">
+                    <AlertCircle className={cn('h-3.5 w-3.5 shrink-0 mt-0.5', severityColor(issue.severity))} />
+                    <p className={cn('font-semibold', severityColor(issue.severity))}>{issue.title}</p>
+                  </div>
+                  <p className="text-muted-foreground pl-5">{issue.description}</p>
+                  <p className="text-primary pl-5">
+                    <span className="font-semibold">Suggestion: </span>{issue.suggestion}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Budget Alerts */}
       {topOverspend.length > 0 && (

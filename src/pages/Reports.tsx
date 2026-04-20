@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useFinance } from '@/contexts/FinanceContext';
 import {
   getTotalBalance, getHomeDebtSummary, getMonthTransactions,
-  getAccountBalance, getOverspendCategories,
+  getAccountBalance, getOverspendCategories, rc,
 } from '@/lib/financial-store';
 import {
   ACCOUNTS, getCashAccounts, getBankAccounts, MONTH_NAMES,
@@ -15,21 +15,52 @@ import DataControls from '@/components/DataControls';
 import OverspendAnalytics from '@/components/OverspendAnalytics';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import {
   TrendingUp, TrendingDown, Wallet, ArrowUpRight, ArrowDownRight,
-  Home, CreditCard, FileDown, BarChart2,
+  Home, CreditCard, BarChart2, Pencil, Check, X, AlertCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 type ReportTab = 'summary' | 'analytics';
 
+// ── Real Balance persistence ──────────────────────────────────────────────────
+const REAL_BAL_KEY = 'finance-real-balances';
+
+function loadRealBalances(): Record<string, number> {
+  try { return JSON.parse(localStorage.getItem(REAL_BAL_KEY) || '{}'); }
+  catch { return {}; }
+}
+function saveRealBalances(data: Record<string, number>) {
+  localStorage.setItem(REAL_BAL_KEY, JSON.stringify(data));
+}
+
 export default function Reports() {
   const { state, selectedYear, selectedMonth } = useFinance();
   const [activeTab, setActiveTab] = useState<ReportTab>('summary');
 
-  const totals   = getTotalBalance(state.transactions, selectedYear, selectedMonth, state.initialBalances, state.accountBalances);
-  const homeDebt = getHomeDebtSummary(state.transactions, selectedYear, selectedMonth);
+  // ── Real balance state (persisted in localStorage) ────────────────────────
+  const [realBalances, setRealBalances] = useState<Record<string, number>>(loadRealBalances);
+  const [editingRealBal, setEditingRealBal] = useState<string | null>(null);
+  const [editRealValue, setEditRealValue] = useState('');
+
+  const handleStartEditReal = (accId: string, currentReal: number) => {
+    setEditingRealBal(accId);
+    setEditRealValue(String(currentReal));
+  };
+  const handleSaveReal = useCallback((accId: string) => {
+    const val = Number(editRealValue);
+    if (isNaN(val)) { toast.error('Enter a valid number'); return; }
+    const updated = { ...realBalances, [accId]: Math.round(val) };
+    setRealBalances(updated);
+    saveRealBalances(updated);
+    setEditingRealBal(null);
+    toast.success('Real balance saved');
+  }, [editRealValue, realBalances]);
+
+  const totals    = getTotalBalance(state.transactions, selectedYear, selectedMonth, state.initialBalances, state.accountBalances);
+  const homeDebt  = getHomeDebtSummary(state.transactions, selectedYear, selectedMonth);
   const monthTxns = getMonthTransactions(state.transactions, selectedYear, selectedMonth);
 
   const cashAccounts = getCashAccounts();
@@ -43,6 +74,19 @@ export default function Reports() {
   const overallOpening     = totalCashOpening + totalOnlineOpening;
   const overallClosing     = totalCashClosing + totalOnlineClosing;
 
+  // ── Missing Money from Real Balance differences ───────────────────────────
+  const missingMoneyFromReal = useMemo(() => {
+    let total = 0;
+    for (const acc of ACCOUNTS) {
+      const real = realBalances[acc.id];
+      if (real !== undefined) {
+        const closing = getAccBal(acc.id).closing;
+        total = rc(total + (real - closing));
+      }
+    }
+    return total;
+  }, [realBalances, state.transactions, state.accountBalances, selectedYear, selectedMonth]);
+
   const prevMonth  = selectedMonth === 0 ? 11 : selectedMonth - 1;
   const prevYear   = selectedMonth === 0 ? selectedYear - 1 : selectedYear;
   const prevTotals = getTotalBalance(state.transactions, prevYear, prevMonth, state.initialBalances, state.accountBalances);
@@ -53,8 +97,6 @@ export default function Reports() {
 
   const savingsRate = totals.income > 0
     ? Math.round(((totals.income - totals.expense) / totals.income) * 100) : 0;
-
-  const expenseCategories = getOverspendCategories(state.transactions, state.budgets, selectedYear, selectedMonth);
 
   const debtActuals: Record<string, number> = {};
   const homeIncomeActuals: Record<string, number> = {};
@@ -70,42 +112,94 @@ export default function Reports() {
     }
   }
 
-  const customHomeIncome   = (state.incomeSources  || []).filter(s => s.group === 'home');
-  const customDebtIncome   = (state.incomeSources  || []).filter(s => s.group === 'debt');
-  const customDebtExpense  = (state.expenseSources || []).filter(s => s.group === 'debt');
+  const customHomeIncome  = (state.incomeSources  || []).filter(s => s.group === 'home');
+  const customDebtIncome  = (state.incomeSources  || []).filter(s => s.group === 'debt');
+  const customDebtExpense = (state.expenseSources || []).filter(s => s.group === 'debt');
 
   const allHomeIncomeCategories  = [...HOME_INCOME_CATEGORIES,  ...customHomeIncome.map(s => s.name)];
   const allDebtIncomeCategories  = [...DEBT_INCOME_CATEGORIES,  ...customDebtIncome.map(s => s.name)];
   const allDebtExpenseCategories = [...DEBT_EXPENSE_CATEGORIES, ...customDebtExpense.map(s => s.name)];
 
-  const getIncomeExpected  = (cat: string) => DEFAULT_EXPECTED_INCOME[cat] ?? 0;
-  const getDebtExpExpected = (cat: string) => DEFAULT_EXPECTED_DEBT_EXPENSE[cat] ?? 0;
-
-  // ── Account Balance Row helper ─────────────────────────────────────────────
-  const AccRow = ({ label, opening, closing, bold = false }: {
-    label: string; opening: number; closing: number; bold?: boolean;
+  // ── Account Balance Row with Real Balance + Difference ────────────────────
+  const AccRow = ({ accId, label, opening, closing, bold = false }: {
+    accId?: string; label: string; opening: number; closing: number; bold?: boolean;
   }) => {
-    const diff = closing - opening;
+    const realVal = accId !== undefined ? realBalances[accId] : undefined;
+    // difference = real - system closing (positive = extra money, negative = missing)
+    const difference = realVal !== undefined ? rc(realVal - closing) : null;
+    const isEditing = accId !== undefined && editingRealBal === accId;
+
     return (
-      <div className={cn('flex items-center justify-between text-xs py-1',
-        bold ? 'font-bold border-t border-border/40 pt-2 mt-1' : '')}>
-        <span className={bold ? 'text-foreground' : 'text-muted-foreground'}>{label}</span>
-        <div className="flex gap-0 text-right">
-          {/* Opening */}
-          <span className="w-20 tabular-nums text-right">{fmt(opening)}</span>
-          {/* Closing */}
-          <span className={cn('w-20 tabular-nums text-right ml-4',
-            bold ? '' : closing < 0 ? 'text-destructive' : '')}>{fmt(closing)}</span>
-          {/* Difference — new column */}
-          {/* <span className={cn('w-24 tabular-nums text-right ml-4 font-semibold',
-            diff > 0 ? 'text-success' : diff < 0 ? 'text-destructive' : 'text-muted-foreground')}>
-            {diff > 0 ? `+${fmt(diff)}` : diff < 0 ? `-${fmt(Math.abs(diff))}` : '₹0'}
-          </span> */}
+      <div className={cn(
+        'flex items-center justify-between text-xs py-1.5',
+        bold ? 'font-bold border-t border-border/40 pt-2 mt-1' : '',
+      )}>
+        <span className={cn('flex-1', bold ? 'text-foreground' : 'text-muted-foreground')}>{label}</span>
+
+        {/* Opening */}
+        <span className="w-18 tabular-nums text-right shrink-0">{fmt(opening)}</span>
+
+        {/* Closing */}
+        <span className={cn('w-18 tabular-nums text-right ml-3 shrink-0',
+          !bold && closing < 0 ? 'text-destructive' : '')}>
+          {fmt(closing)}
+        </span>
+
+        {/* Real Balance — editable */}
+        <div className="w-24 ml-3 flex items-center justify-end shrink-0">
+          {accId !== undefined ? (
+            isEditing ? (
+              <div className="flex items-center gap-1">
+                <Input
+                  type="number"
+                  className="w-16 h-6 text-xs px-1 tabular-nums"
+                  value={editRealValue}
+                  onChange={e => setEditRealValue(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') handleSaveReal(accId);
+                    if (e.key === 'Escape') setEditingRealBal(null);
+                  }}
+                  autoFocus
+                />
+                <button onClick={() => handleSaveReal(accId)} className="text-success shrink-0">
+                  <Check className="h-3 w-3" />
+                </button>
+                <button onClick={() => setEditingRealBal(null)} className="text-muted-foreground shrink-0">
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ) : (
+              <button
+                className="flex items-center gap-0.5 group text-right tabular-nums hover:text-primary transition-colors"
+                onClick={() => handleStartEditReal(accId, realVal ?? closing)}
+              >
+                <span className={cn(realVal === undefined ? 'text-muted-foreground/50 italic' : '')}>
+                  {realVal !== undefined ? fmt(realVal) : 'Set'}
+                </span>
+                <Pencil className="h-2.5 w-2.5 opacity-0 group-hover:opacity-60 shrink-0 ml-0.5" />
+              </button>
+            )
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          )}
+        </div>
+
+        {/* Difference */}
+        <div className="w-20 ml-2 text-right tabular-nums shrink-0">
+          {difference !== null ? (
+            <span className={cn('font-semibold',
+              difference > 0 ? 'text-success' :
+              difference < 0 ? 'text-destructive' :
+              'text-muted-foreground')}>
+              {difference > 0 ? `+${fmt(difference)}` : difference < 0 ? `-${fmt(Math.abs(difference))}` : '₹0'}
+            </span>
+          ) : (
+            <span className="text-muted-foreground/40">—</span>
+          )}
         </div>
       </div>
     );
   };
-
 
   return (
     <div className="pb-20 px-4 pt-4 max-w-lg mx-auto space-y-4 animate-slide-up">
@@ -115,9 +209,9 @@ export default function Reports() {
       </div>
 
       <div className="flex items-center justify-between flex-wrap gap-2">
-  <p className="text-sm text-muted-foreground">{MONTH_NAMES[selectedMonth]} {selectedYear}</p>
-  <DataControls year={selectedYear} month={selectedMonth} />
-</div>
+        <p className="text-sm text-muted-foreground">{MONTH_NAMES[selectedMonth]} {selectedYear}</p>
+        <DataControls year={selectedYear} month={selectedMonth} />
+      </div>
 
       {/* Tab switcher */}
       <div className="flex gap-1 bg-muted/30 rounded-xl p-1">
@@ -256,25 +350,28 @@ export default function Reports() {
             </div>
           </div>
 
-          {/* ── Account Balances table with DIFFERENCE column ── */}
+          {/* ── Account Balances with Real Balance + Difference ── */}
           <div className="glass-card rounded-xl p-4">
-            <h2 className="text-sm font-semibold mb-3">Account Balances</h2>
+            <h2 className="text-sm font-semibold mb-1">Account Balances</h2>
+            <p className="text-[10px] text-muted-foreground mb-3">
+              Tap any value in "Real Balance" to enter the actual physical amount. Difference = Real − System.
+            </p>
 
             {/* Column headers */}
-            <div className="flex items-center justify-between text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+            <div className="flex items-center justify-between text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 border-b border-border/30 pb-1.5">
               <span className="flex-1">Account</span>
-              <div className="flex gap-0">
-                <span className="w-20 text-right">Opening</span>
-                <span className="w-20 text-right ml-4">Closing</span>
-              </div>
+              <span className="w-18 text-right shrink-0">Opening</span>
+              <span className="w-18 text-right ml-3 shrink-0">Closing</span>
+              <span className="w-24 text-right ml-3 shrink-0">Real Bal</span>
+              <span className="w-20 text-right ml-2 shrink-0">Diff</span>
             </div>
 
             {/* CASH */}
-            <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">Cash</p>
+            <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1 mt-2">Cash</p>
             <div className="space-y-0.5 mb-3">
               {cashAccounts.map(acc => {
                 const bal = getAccBal(acc.id);
-                return <AccRow key={acc.id} label={acc.name} opening={bal.opening} closing={bal.closing} />;
+                return <AccRow key={acc.id} accId={acc.id} label={acc.name} opening={bal.opening} closing={bal.closing} />;
               })}
               <AccRow label="Total Cash" opening={totalCashOpening} closing={totalCashClosing} bold />
             </div>
@@ -284,13 +381,43 @@ export default function Reports() {
             <div className="space-y-0.5 mb-3">
               {bankAccounts.map(acc => {
                 const bal = getAccBal(acc.id);
-                return <AccRow key={acc.id} label={acc.name} opening={bal.opening} closing={bal.closing} />;
+                return <AccRow key={acc.id} accId={acc.id} label={acc.name} opening={bal.opening} closing={bal.closing} />;
               })}
               <AccRow label="Total Bank" opening={totalOnlineOpening} closing={totalOnlineClosing} bold />
             </div>
 
             {/* OVERALL */}
             <AccRow label="Overall Total" opening={overallOpening} closing={overallClosing} bold />
+
+            {/* Missing Money Summary */}
+            {missingMoneyFromReal !== 0 && (
+              <div className={cn(
+                'mt-4 rounded-xl p-3 text-xs flex items-center justify-between',
+                missingMoneyFromReal < 0 ? 'bg-destructive/10 border border-destructive/20' : 'bg-warning/10 border border-warning/20',
+              )}>
+                <div className="flex items-center gap-2">
+                  <AlertCircle className={cn('h-4 w-4', missingMoneyFromReal < 0 ? 'text-destructive' : 'text-warning')} />
+                  <div>
+                    <p className={cn('font-semibold', missingMoneyFromReal < 0 ? 'text-destructive' : 'text-warning')}>
+                      {missingMoneyFromReal < 0 ? 'Missing Money' : 'Extra Money Found'}
+                    </p>
+                    <p className="text-muted-foreground text-[10px] mt-0.5">
+                      Sum of all Real Balance differences
+                    </p>
+                  </div>
+                </div>
+                <span className={cn('text-base font-bold tabular-nums',
+                  missingMoneyFromReal < 0 ? 'text-destructive' : 'text-warning')}>
+                  {missingMoneyFromReal > 0 ? '+' : ''}{missingMoneyFromReal < 0 ? '-' : ''}{fmt(missingMoneyFromReal)}
+                </span>
+              </div>
+            )}
+            {missingMoneyFromReal === 0 && Object.keys(realBalances).length > 0 && (
+              <div className="mt-4 rounded-xl p-3 text-xs flex items-center gap-2 bg-success/10 border border-success/20">
+                <span className="text-success font-semibold">✓ Accounts balanced</span>
+                <span className="text-muted-foreground">Real balances match system</span>
+              </div>
+            )}
           </div>
         </>
       )}
