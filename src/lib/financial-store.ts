@@ -26,6 +26,7 @@ const defaultState: FinancialState = {
   monthData: [],
   initialBalances: { Appa: 0, Amma: 0, Ajai: 0, Mauli: 0 },
   accountBalances: {},
+  realBalances: {},   // ← add this line
 };
 
 // ─── Float safety ─────────────────────────────────────────────────────────────

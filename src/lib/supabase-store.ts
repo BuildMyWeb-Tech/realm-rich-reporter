@@ -18,6 +18,7 @@ const defaultState: FinancialState = {
   monthData: [],
   initialBalances: { Appa: 0, Amma: 0, Ajai: 0, Mauli: 0 },
   accountBalances: {},
+  realBalances: {},
 };
 
 export function loadLocalState(): FinancialState {
@@ -26,6 +27,7 @@ export function loadLocalState(): FinancialState {
     if (!raw) return defaultState;
     const parsed = JSON.parse(raw);
     if (!parsed.accountBalances) parsed.accountBalances = {};
+    if (!parsed.realBalances) parsed.realBalances = {};
     if (parsed.transactions) {
       parsed.transactions = parsed.transactions.map((t: any) => ({
         ...t,
@@ -98,7 +100,7 @@ export async function loadFromSupabase(): Promise<FinancialState> {
       accountId: row.account_id,
     }));
 
-    // Parse config
+    // Parse config — now includes realBalances
     const configMap: Record<string, any> = {};
     for (const row of configRes.data || []) {
       configMap[row.key] = row.value;
@@ -111,6 +113,12 @@ export async function loadFromSupabase(): Promise<FinancialState> {
       monthData: [],
       initialBalances: configMap['initialBalances'] || defaultState.initialBalances,
       accountBalances: configMap['accountBalances'] || {},
+      // ✅ NEW: real balances loaded from DB
+      realBalances: configMap['realBalances'] || {},
+      // Custom sources
+      incomeSources: configMap['incomeSources'],
+      expenseSources: configMap['expenseSources'],
+      accountNames: configMap['accountNames'],
     };
 
     // Save to local as cache
@@ -191,7 +199,6 @@ export async function saveConfig(key: string, value: any): Promise<void> {
 }
 
 // ─── MIGRATION ───────────────────────────────────────────────────────────────
-// Uploads all localStorage data to Supabase in one go
 
 export async function migrateLocalToSupabase(): Promise<{ success: boolean; message: string }> {
   const local = loadLocalState();
@@ -201,7 +208,6 @@ export async function migrateLocalToSupabase(): Promise<{ success: boolean; mess
   }
 
   try {
-    // Upload transactions in batches of 100
     const txnBatches = chunkArray(local.transactions, 100);
     for (const batch of txnBatches) {
       const rows = batch.map(txn => ({
@@ -225,7 +231,6 @@ export async function migrateLocalToSupabase(): Promise<{ success: boolean; mess
       if (error) throw error;
     }
 
-    // Upload budgets
     if (local.budgets.length > 0) {
       const { error } = await supabase.from('budgets').upsert(
         local.budgets.map(b => ({ ...b })),
@@ -234,7 +239,6 @@ export async function migrateLocalToSupabase(): Promise<{ success: boolean; mess
       if (error) throw error;
     }
 
-    // Upload recurring entries
     if (local.recurringEntries.length > 0) {
       const rows = local.recurringEntries.map(e => ({
         id: e.id,
@@ -253,9 +257,12 @@ export async function migrateLocalToSupabase(): Promise<{ success: boolean; mess
       if (error) throw error;
     }
 
-    // Upload config
     await saveConfig('initialBalances', local.initialBalances);
     await saveConfig('accountBalances', local.accountBalances);
+    // ✅ Also migrate real balances if present
+    if (local.realBalances && Object.keys(local.realBalances).length > 0) {
+      await saveConfig('realBalances', local.realBalances);
+    }
 
     return {
       success: true,

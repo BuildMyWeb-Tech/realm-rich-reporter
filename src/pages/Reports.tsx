@@ -2,11 +2,10 @@ import { useState, useMemo, useCallback } from 'react';
 import { useFinance } from '@/contexts/FinanceContext';
 import {
   getTotalBalance, getHomeDebtSummary, getMonthTransactions,
-  getAccountBalance, getOverspendCategories, rc,
+  getAccountBalance, rc,
 } from '@/lib/financial-store';
 import {
   ACCOUNTS, getCashAccounts, getBankAccounts, MONTH_NAMES,
-  DEFAULT_EXPECTED_INCOME, DEFAULT_EXPECTED_DEBT_EXPENSE,
   HOME_INCOME_CATEGORIES, DEBT_INCOME_CATEGORIES, DEBT_EXPENSE_CATEGORIES,
 } from '@/lib/types';
 import MonthSelector from '@/components/MonthSelector';
@@ -25,39 +24,35 @@ import { toast } from 'sonner';
 
 type ReportTab = 'summary' | 'analytics';
 
-// ── Real Balance persistence ──────────────────────────────────────────────────
-const REAL_BAL_KEY = 'finance-real-balances';
-
-function loadRealBalances(): Record<string, number> {
-  try { return JSON.parse(localStorage.getItem(REAL_BAL_KEY) || '{}'); }
-  catch { return {}; }
-}
-function saveRealBalances(data: Record<string, number>) {
-  localStorage.setItem(REAL_BAL_KEY, JSON.stringify(data));
-}
-
 export default function Reports() {
-  const { state, selectedYear, selectedMonth } = useFinance();
+  const { state, selectedYear, selectedMonth, setRealBalance, isSyncing } = useFinance();
   const [activeTab, setActiveTab] = useState<ReportTab>('summary');
 
-  // ── Real balance state (persisted in localStorage) ────────────────────────
-  const [realBalances, setRealBalances] = useState<Record<string, number>>(loadRealBalances);
+  // ── Real balance edit state (UI only — actual values come from state.realBalances) ──
   const [editingRealBal, setEditingRealBal] = useState<string | null>(null);
   const [editRealValue, setEditRealValue] = useState('');
 
-  const handleStartEditReal = (accId: string, currentReal: number) => {
+  // ✅ All values read directly from state (loaded from Supabase)
+  const realBalances = state.realBalances ?? {};
+
+  const handleStartEditReal = (accId: string) => {
+    const current = realBalances[accId];
+    const accBal = getAccountBalance(state.transactions, accId, selectedYear, selectedMonth, state.accountBalances);
     setEditingRealBal(accId);
-    setEditRealValue(String(currentReal));
+    // Pre-fill with existing real balance if set, otherwise use closing balance as starting point
+    setEditRealValue(String(current !== undefined ? current : accBal.closing));
   };
-  const handleSaveReal = useCallback((accId: string) => {
+
+  const handleSaveReal = useCallback(async (accId: string) => {
     const val = Number(editRealValue);
     if (isNaN(val)) { toast.error('Enter a valid number'); return; }
-    const updated = { ...realBalances, [accId]: Math.round(val) };
-    setRealBalances(updated);
-    saveRealBalances(updated);
     setEditingRealBal(null);
-    toast.success('Real balance saved');
-  }, [editRealValue, realBalances]);
+    // ✅ Calls context → saveConfig('realBalances', ...) → Supabase
+    await setRealBalance(accId, val);
+    toast.success('Real balance saved to cloud ☁️');
+  }, [editRealValue, setRealBalance]);
+
+  const handleCancelEdit = () => setEditingRealBal(null);
 
   const totals    = getTotalBalance(state.transactions, selectedYear, selectedMonth, state.initialBalances, state.accountBalances);
   const homeDebt  = getHomeDebtSummary(state.transactions, selectedYear, selectedMonth);
@@ -65,7 +60,8 @@ export default function Reports() {
 
   const cashAccounts = getCashAccounts();
   const bankAccounts = getBankAccounts();
-  const getAccBal = (id: string) => getAccountBalance(state.transactions, id, selectedYear, selectedMonth, state.accountBalances);
+  const getAccBal = (id: string) =>
+    getAccountBalance(state.transactions, id, selectedYear, selectedMonth, state.accountBalances);
 
   const totalCashOpening   = cashAccounts.reduce((s, a) => s + getAccBal(a.id).opening, 0);
   const totalCashClosing   = cashAccounts.reduce((s, a) => s + getAccBal(a.id).closing, 0);
@@ -74,7 +70,9 @@ export default function Reports() {
   const overallOpening     = totalCashOpening + totalOnlineOpening;
   const overallClosing     = totalCashClosing + totalOnlineClosing;
 
-  // ── Missing Money from Real Balance differences ───────────────────────────
+  // ── Missing Money from Real Balance differences ────────────────────────────
+  // difference per account = real - system_closing
+  // negative = money is missing; positive = extra money found
   const missingMoneyFromReal = useMemo(() => {
     let total = 0;
     for (const acc of ACCOUNTS) {
@@ -85,6 +83,7 @@ export default function Reports() {
       }
     }
     return total;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [realBalances, state.transactions, state.accountBalances, selectedYear, selectedMonth]);
 
   const prevMonth  = selectedMonth === 0 ? 11 : selectedMonth - 1;
@@ -98,34 +97,12 @@ export default function Reports() {
   const savingsRate = totals.income > 0
     ? Math.round(((totals.income - totals.expense) / totals.income) * 100) : 0;
 
-  const debtActuals: Record<string, number> = {};
-  const homeIncomeActuals: Record<string, number> = {};
-  const debtIncomeActuals: Record<string, number> = {};
-  for (const t of monthTxns) {
-    if (t.type === 'expense' && t.homeOrDebt === 'debt')
-      debtActuals[t.category] = (debtActuals[t.category] || 0) + t.amount;
-    if (t.type === 'income') {
-      if (t.homeOrDebt === 'home')
-        homeIncomeActuals[t.category] = (homeIncomeActuals[t.category] || 0) + t.amount;
-      else
-        debtIncomeActuals[t.category] = (debtIncomeActuals[t.category] || 0) + t.amount;
-    }
-  }
-
-  const customHomeIncome  = (state.incomeSources  || []).filter(s => s.group === 'home');
-  const customDebtIncome  = (state.incomeSources  || []).filter(s => s.group === 'debt');
-  const customDebtExpense = (state.expenseSources || []).filter(s => s.group === 'debt');
-
-  const allHomeIncomeCategories  = [...HOME_INCOME_CATEGORIES,  ...customHomeIncome.map(s => s.name)];
-  const allDebtIncomeCategories  = [...DEBT_INCOME_CATEGORIES,  ...customDebtIncome.map(s => s.name)];
-  const allDebtExpenseCategories = [...DEBT_EXPENSE_CATEGORIES, ...customDebtExpense.map(s => s.name)];
-
   // ── Account Balance Row with Real Balance + Difference ────────────────────
-  const AccRow = ({ accId, label, opening, closing, bold = false }: {
+  function AccRow({ accId, label, opening, closing, bold = false }: {
     accId?: string; label: string; opening: number; closing: number; bold?: boolean;
-  }) => {
+  }) {
     const realVal = accId !== undefined ? realBalances[accId] : undefined;
-    // difference = real - system closing (positive = extra money, negative = missing)
+    // difference = real − system_closing (positive = extra, negative = missing)
     const difference = realVal !== undefined ? rc(realVal - closing) : null;
     const isEditing = accId !== undefined && editingRealBal === accId;
 
@@ -134,7 +111,9 @@ export default function Reports() {
         'flex items-center justify-between text-xs py-1.5',
         bold ? 'font-bold border-t border-border/40 pt-2 mt-1' : '',
       )}>
-        <span className={cn('flex-1', bold ? 'text-foreground' : 'text-muted-foreground')}>{label}</span>
+        <span className={cn('flex-1 min-w-0 truncate', bold ? 'text-foreground' : 'text-muted-foreground')}>
+          {label}
+        </span>
 
         {/* Opening */}
         <span className="w-18 tabular-nums text-right shrink-0">{fmt(opening)}</span>
@@ -145,7 +124,7 @@ export default function Reports() {
           {fmt(closing)}
         </span>
 
-        {/* Real Balance — editable */}
+        {/* Real Balance — editable, saves to DB */}
         <div className="w-24 ml-3 flex items-center justify-end shrink-0">
           {accId !== undefined ? (
             isEditing ? (
@@ -157,21 +136,26 @@ export default function Reports() {
                   onChange={e => setEditRealValue(e.target.value)}
                   onKeyDown={e => {
                     if (e.key === 'Enter') handleSaveReal(accId);
-                    if (e.key === 'Escape') setEditingRealBal(null);
+                    if (e.key === 'Escape') handleCancelEdit();
                   }}
                   autoFocus
                 />
-                <button onClick={() => handleSaveReal(accId)} className="text-success shrink-0">
+                <button
+                  onClick={() => handleSaveReal(accId)}
+                  className="text-success shrink-0"
+                  title="Save to cloud"
+                >
                   <Check className="h-3 w-3" />
                 </button>
-                <button onClick={() => setEditingRealBal(null)} className="text-muted-foreground shrink-0">
+                <button onClick={handleCancelEdit} className="text-muted-foreground shrink-0">
                   <X className="h-3 w-3" />
                 </button>
               </div>
             ) : (
               <button
                 className="flex items-center gap-0.5 group text-right tabular-nums hover:text-primary transition-colors"
-                onClick={() => handleStartEditReal(accId, realVal ?? closing)}
+                onClick={() => handleStartEditReal(accId)}
+                title="Click to edit real balance (saves to DB)"
               >
                 <span className={cn(realVal === undefined ? 'text-muted-foreground/50 italic' : '')}>
                   {realVal !== undefined ? fmt(realVal) : 'Set'}
@@ -184,14 +168,18 @@ export default function Reports() {
           )}
         </div>
 
-        {/* Difference */}
+        {/* Difference column */}
         <div className="w-20 ml-2 text-right tabular-nums shrink-0">
           {difference !== null ? (
             <span className={cn('font-semibold',
-              difference > 0 ? 'text-success' :
-              difference < 0 ? 'text-destructive' :
+              difference > 0  ? 'text-success' :
+              difference < 0  ? 'text-destructive' :
               'text-muted-foreground')}>
-              {difference > 0 ? `+${fmt(difference)}` : difference < 0 ? `-${fmt(Math.abs(difference))}` : '₹0'}
+              {difference > 0
+                ? `+${fmt(difference)}`
+                : difference < 0
+                  ? `-${fmt(Math.abs(difference))}`
+                  : '₹0'}
             </span>
           ) : (
             <span className="text-muted-foreground/40">—</span>
@@ -199,7 +187,7 @@ export default function Reports() {
         </div>
       </div>
     );
-  };
+  }
 
   return (
     <div className="pb-20 px-4 pt-4 max-w-lg mx-auto space-y-4 animate-slide-up">
@@ -213,13 +201,27 @@ export default function Reports() {
         <DataControls year={selectedYear} month={selectedMonth} />
       </div>
 
+      {/* Sync indicator */}
+      {isSyncing && (
+        <div className="text-[10px] text-primary/70 flex items-center gap-1.5 px-1">
+          <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+          Saving to cloud…
+        </div>
+      )}
+
       {/* Tab switcher */}
       <div className="flex gap-1 bg-muted/30 rounded-xl p-1">
         {(['summary', 'analytics'] as ReportTab[]).map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)}
-            className={cn('flex-1 text-xs font-semibold rounded-lg py-2 transition-all flex items-center justify-center gap-1',
-              activeTab === tab ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
-            {tab === 'summary' ? '📊 Monthly Summary' : <><BarChart2 className="h-3 w-3" /> Overspend Analytics</>}
+            className={cn(
+              'flex-1 text-xs font-semibold rounded-lg py-2 transition-all flex items-center justify-center gap-1',
+              activeTab === tab
+                ? 'bg-card text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+            )}>
+            {tab === 'summary'
+              ? '📊 Monthly Summary'
+              : <><BarChart2 className="h-3 w-3" /> Overspend Analytics</>}
           </button>
         ))}
       </div>
@@ -240,24 +242,34 @@ export default function Reports() {
                 </div>
               </div>
               <div className="flex items-center justify-between pl-4 border-l-2 border-success/40">
-                <div className="flex items-center gap-2"><TrendingUp className="h-4 w-4 text-success" /><p className="text-sm text-muted-foreground">+ Total Income</p></div>
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="h-4 w-4 text-success" />
+                  <p className="text-sm text-muted-foreground">+ Total Income</p>
+                </div>
                 <p className="text-sm font-bold text-success tabular-nums">+{fmt(totals.income)}</p>
               </div>
               <div className="flex items-center justify-between pl-4 border-l-2 border-destructive/40">
-                <div className="flex items-center gap-2"><TrendingDown className="h-4 w-4 text-destructive" /><p className="text-sm text-muted-foreground">- Total Expense</p></div>
+                <div className="flex items-center gap-2">
+                  <TrendingDown className="h-4 w-4 text-destructive" />
+                  <p className="text-sm text-muted-foreground">- Total Expense</p>
+                </div>
                 <p className="text-sm font-bold text-destructive tabular-nums">-{fmt(totals.expense)}</p>
               </div>
               <div className="border-t border-border/50 pt-2" />
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className={cn('h-8 w-8 rounded-lg flex items-center justify-center',
-                    overallClosing >= overallOpening ? 'bg-success/15' : 'bg-destructive/15')}>
+                  <div className={cn(
+                    'h-8 w-8 rounded-lg flex items-center justify-center',
+                    overallClosing >= overallOpening ? 'bg-success/15' : 'bg-destructive/15',
+                  )}>
                     <Wallet className={cn('h-4 w-4', overallClosing >= overallOpening ? 'text-success' : 'text-destructive')} />
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground">Ending Balance</p>
-                    <p className={cn('text-xl font-bold tabular-nums',
-                      overallClosing >= overallOpening ? 'text-success' : 'text-destructive')}>
+                    <p className={cn(
+                      'text-xl font-bold tabular-nums',
+                      overallClosing >= overallOpening ? 'text-success' : 'text-destructive',
+                    )}>
                       {fmt(overallClosing)}
                     </p>
                   </div>
@@ -279,18 +291,28 @@ export default function Reports() {
               <p className="text-xs text-muted-foreground mb-1">Total Income</p>
               <p className="text-lg font-bold text-success tabular-nums">{fmt(totals.income)}</p>
               <div className="mt-2">
-                <div className="flex justify-between text-xs text-muted-foreground mb-1"><span>Home</span><span className="tabular-nums">{fmt(homeDebt.homeIncome)}</span></div>
-                <Progress value={totals.income > 0 ? (homeDebt.homeIncome / totals.income) * 100 : 0} className="h-1 [&>div]:bg-success" />
-                <div className="flex justify-between text-xs text-muted-foreground mt-1"><span>Debt</span><span className="tabular-nums">{fmt(homeDebt.debtIncome)}</span></div>
+                <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                  <span>Home</span><span className="tabular-nums">{fmt(homeDebt.homeIncome)}</span>
+                </div>
+                <Progress value={totals.income > 0 ? (homeDebt.homeIncome / totals.income) * 100 : 0}
+                  className="h-1 [&>div]:bg-success" />
+                <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                  <span>Debt</span><span className="tabular-nums">{fmt(homeDebt.debtIncome)}</span>
+                </div>
               </div>
             </div>
             <div className="glass-card rounded-xl p-4">
               <p className="text-xs text-muted-foreground mb-1">Total Expense</p>
               <p className="text-lg font-bold text-destructive tabular-nums">{fmt(totals.expense)}</p>
               <div className="mt-2">
-                <div className="flex justify-between text-xs text-muted-foreground mb-1"><span>Home</span><span className="tabular-nums">{fmt(homeDebt.homeExpense)}</span></div>
-                <Progress value={totals.expense > 0 ? (homeDebt.homeExpense / totals.expense) * 100 : 0} className="h-1 [&>div]:bg-destructive" />
-                <div className="flex justify-between text-xs text-muted-foreground mt-1"><span>Debt</span><span className="tabular-nums">{fmt(homeDebt.debtExpense)}</span></div>
+                <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                  <span>Home</span><span className="tabular-nums">{fmt(homeDebt.homeExpense)}</span>
+                </div>
+                <Progress value={totals.expense > 0 ? (homeDebt.homeExpense / totals.expense) * 100 : 0}
+                  className="h-1 [&>div]:bg-destructive" />
+                <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                  <span>Debt</span><span className="tabular-nums">{fmt(homeDebt.debtExpense)}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -299,14 +321,21 @@ export default function Reports() {
           <div className="glass-card rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm font-semibold">Savings Rate</p>
-              <span className={cn('text-lg font-bold', savingsRate >= 20 ? 'text-success' : savingsRate >= 0 ? 'text-warning' : 'text-destructive')}>
+              <span className={cn(
+                'text-lg font-bold',
+                savingsRate >= 20 ? 'text-success' : savingsRate >= 0 ? 'text-warning' : 'text-destructive',
+              )}>
                 {savingsRate}%
               </span>
             </div>
             <Progress value={Math.max(0, Math.min(savingsRate, 100))}
-              className={cn('h-3', savingsRate >= 20 ? '[&>div]:bg-success' : savingsRate >= 0 ? '[&>div]:bg-warning' : '[&>div]:bg-destructive')} />
+              className={cn('h-3',
+                savingsRate >= 20 ? '[&>div]:bg-success' :
+                savingsRate >= 0  ? '[&>div]:bg-warning' : '[&>div]:bg-destructive')} />
             <div className="flex justify-between text-xs text-muted-foreground mt-2">
-              <span className="tabular-nums">Net: {totals.income - totals.expense >= 0 ? '+' : ''}{fmt(totals.income - totals.expense)}</span>
+              <span className="tabular-nums">
+                Net: {totals.income - totals.expense >= 0 ? '+' : ''}{fmt(totals.income - totals.expense)}
+              </span>
               <span>{savingsRate >= 20 ? '✅ Great!' : savingsRate >= 0 ? '⚠️ Low' : '🔴 Overspent'}</span>
             </div>
           </div>
@@ -315,7 +344,10 @@ export default function Reports() {
           <div className="glass-card rounded-xl p-4">
             <h2 className="text-sm font-semibold mb-4">Home vs Debt Split</h2>
             <div className="rounded-xl bg-success/8 p-3 mb-3">
-              <div className="flex items-center gap-2 mb-2"><Home className="h-4 w-4 text-success" /><span className="text-sm font-semibold text-success">Home</span></div>
+              <div className="flex items-center gap-2 mb-2">
+                <Home className="h-4 w-4 text-success" />
+                <span className="text-sm font-semibold text-success">Home</span>
+              </div>
               <div className="space-y-1 text-xs">
                 <div className="flex justify-between"><span className="text-muted-foreground">Income</span><span className="font-medium text-success tabular-nums">+{fmt(homeDebt.homeIncome)}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Expense</span><span className="font-medium text-destructive tabular-nums">-{fmt(homeDebt.homeExpense)}</span></div>
@@ -328,7 +360,10 @@ export default function Reports() {
               </div>
             </div>
             <div className="rounded-xl bg-warning/8 p-3">
-              <div className="flex items-center gap-2 mb-2"><CreditCard className="h-4 w-4 text-warning" /><span className="text-sm font-semibold text-warning">Debt</span></div>
+              <div className="flex items-center gap-2 mb-2">
+                <CreditCard className="h-4 w-4 text-warning" />
+                <span className="text-sm font-semibold text-warning">Debt</span>
+              </div>
               <div className="space-y-1 text-xs">
                 <div className="flex justify-between"><span className="text-muted-foreground">Income</span><span className="font-medium text-success tabular-nums">+{fmt(homeDebt.debtIncome)}</span></div>
                 <div className="flex justify-between"><span className="text-muted-foreground">Expense</span><span className="font-medium text-destructive tabular-nums">-{fmt(homeDebt.debtExpense)}</span></div>
@@ -354,7 +389,8 @@ export default function Reports() {
           <div className="glass-card rounded-xl p-4">
             <h2 className="text-sm font-semibold mb-1">Account Balances</h2>
             <p className="text-[10px] text-muted-foreground mb-3">
-              Tap any value in "Real Balance" to enter the actual physical amount. Difference = Real − System.
+              Tap any value in "Real Balance" to enter the actual physical amount.
+              Saves to cloud ☁️ — available on all devices. Difference = Real − System.
             </p>
 
             {/* Column headers */}
@@ -389,33 +425,41 @@ export default function Reports() {
             {/* OVERALL */}
             <AccRow label="Overall Total" opening={overallOpening} closing={overallClosing} bold />
 
-            {/* Missing Money Summary */}
+            {/* Missing / Extra Money Summary */}
             {missingMoneyFromReal !== 0 && (
               <div className={cn(
-                'mt-4 rounded-xl p-3 text-xs flex items-center justify-between',
-                missingMoneyFromReal < 0 ? 'bg-destructive/10 border border-destructive/20' : 'bg-warning/10 border border-warning/20',
+                'mt-4 rounded-xl p-3 text-xs flex items-center justify-between gap-3',
+                missingMoneyFromReal < 0
+                  ? 'bg-destructive/10 border border-destructive/20'
+                  : 'bg-warning/10 border border-warning/20',
               )}>
-                <div className="flex items-center gap-2">
-                  <AlertCircle className={cn('h-4 w-4', missingMoneyFromReal < 0 ? 'text-destructive' : 'text-warning')} />
-                  <div>
-                    <p className={cn('font-semibold', missingMoneyFromReal < 0 ? 'text-destructive' : 'text-warning')}>
-                      {missingMoneyFromReal < 0 ? 'Missing Money' : 'Extra Money Found'}
+                <div className="flex items-center gap-2 min-w-0">
+                  <AlertCircle className={cn('h-4 w-4 shrink-0',
+                    missingMoneyFromReal < 0 ? 'text-destructive' : 'text-warning')} />
+                  <div className="min-w-0">
+                    <p className={cn('font-semibold',
+                      missingMoneyFromReal < 0 ? 'text-destructive' : 'text-warning')}>
+                      {missingMoneyFromReal < 0 ? '⚠️ Missing Money' : '✨ Extra Money Found'}
                     </p>
-                    <p className="text-muted-foreground text-[10px] mt-0.5">
+                    <p className="text-muted-foreground text-[10px] mt-0.5 truncate">
                       Sum of all Real Balance differences
                     </p>
                   </div>
                 </div>
-                <span className={cn('text-base font-bold tabular-nums',
-                  missingMoneyFromReal < 0 ? 'text-destructive' : 'text-warning')}>
-                  {missingMoneyFromReal > 0 ? '+' : ''}{missingMoneyFromReal < 0 ? '-' : ''}{fmt(missingMoneyFromReal)}
+                <span className={cn(
+                  'text-base font-bold tabular-nums shrink-0',
+                  missingMoneyFromReal < 0 ? 'text-destructive' : 'text-warning',
+                )}>
+                  {missingMoneyFromReal > 0 ? '+' : ''}{fmt(Math.abs(missingMoneyFromReal))}
+                  {missingMoneyFromReal < 0 ? ' short' : ' extra'}
                 </span>
               </div>
             )}
+
             {missingMoneyFromReal === 0 && Object.keys(realBalances).length > 0 && (
               <div className="mt-4 rounded-xl p-3 text-xs flex items-center gap-2 bg-success/10 border border-success/20">
                 <span className="text-success font-semibold">✓ Accounts balanced</span>
-                <span className="text-muted-foreground">Real balances match system</span>
+                <span className="text-muted-foreground">Real balances match system exactly</span>
               </div>
             )}
           </div>

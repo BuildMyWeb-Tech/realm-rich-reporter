@@ -15,7 +15,7 @@ import {
 } from '@/lib/supabase-store';
 
 export interface MissingMoneyEntry {
-  date: string; // YYYY-MM-DD
+  date: string;
   amount: number;
 }
 
@@ -31,11 +31,11 @@ interface FinanceContextType {
   deleteRecurring: (id: string) => Promise<void>;
   setInitialBalance: (person: Person, amount: number) => Promise<void>;
   setAccountBalance: (accountId: string, amount: number) => Promise<void>;
-  // Settings CRUD — persists to state + localStorage + Supabase
+  // ✅ NEW: set real (physical) balance for an account — persists to Supabase
+  setRealBalance: (accountId: string, amount: number) => Promise<void>;
   setIncomeSources: (sources: IncomeSource[]) => Promise<void>;
   setExpenseSources: (sources: ExpenseSource[]) => Promise<void>;
   setAccountNames: (names: Record<string, string>) => Promise<void>;
-  // Missing money log
   missingMoneyLog: MissingMoneyEntry[];
   logMissingMoney: (date: string, amount: number) => void;
   migrateData: () => Promise<{ success: boolean; message: string }>;
@@ -48,7 +48,6 @@ interface FinanceContextType {
 
 const FinanceContext = createContext<FinanceContextType | null>(null);
 
-// Missing money log is stored separately in localStorage
 const MISSING_LOG_KEY = 'family-finance-missing-log';
 
 function loadMissingLog(): MissingMoneyEntry[] {
@@ -57,7 +56,6 @@ function loadMissingLog(): MissingMoneyEntry[] {
     return raw ? JSON.parse(raw) : [];
   } catch { return []; }
 }
-
 function saveMissingLog(log: MissingMoneyEntry[]) {
   localStorage.setItem(MISSING_LOG_KEY, JSON.stringify(log));
 }
@@ -162,8 +160,26 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  // ─── REAL BALANCE (physical cash/bank) ────────────────────────────────────
+  // Persists the ENTIRE realBalances map to Supabase app_config as key='realBalances'.
+  // Optimistic update → setState first, then async save.
+
+  const setRealBalance = useCallback(async (accountId: string, amount: number) => {
+    let updatedMap: Record<string, number> = {};
+
+    setState(s => {
+      updatedMap = { ...s.realBalances, [accountId]: Math.round(amount) };
+      return { ...s, realBalances: updatedMap };
+    });
+
+    setIsSyncing(true);
+    // Small delay to let setState flush so updatedMap is captured correctly
+    await new Promise(r => setTimeout(r, 0));
+    await saveConfig('realBalances', updatedMap);
+    setIsSyncing(false);
+  }, []);
+
   // ─── SETTINGS CRUD ────────────────────────────────────────────────────────
-  // These write directly to state so all pages pick up changes without refresh
 
   const setIncomeSources = useCallback(async (sources: IncomeSource[]) => {
     setState(s => {
@@ -193,11 +209,9 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
 
   const logMissingMoney = useCallback((date: string, amount: number) => {
     setMissingMoneyLog(prev => {
-      // Update or insert entry for this date
       const existing = prev.findIndex(e => e.date === date);
       let updated: MissingMoneyEntry[];
       if (amount === 0) {
-        // Remove zero entries
         updated = prev.filter(e => e.date !== date);
       } else if (existing >= 0) {
         updated = prev.map(e => e.date === date ? { date, amount } : e);
@@ -228,6 +242,7 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
       addTransaction, deleteTransaction, updateTransaction,
       setBudget, addRecurring, deleteRecurring,
       setInitialBalance, setAccountBalance,
+      setRealBalance,
       setIncomeSources, setExpenseSources, setAccountNames,
       missingMoneyLog, logMissingMoney,
       migrateData, refreshFromCloud,
