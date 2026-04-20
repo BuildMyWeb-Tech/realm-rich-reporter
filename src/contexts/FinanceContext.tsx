@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { Transaction, Budget, RecurringEntry, FinancialState, Person, IncomeSource, ExpenseSource } from '@/lib/types';
-import { generateId } from '@/lib/financial-store';
+import { generateId, normalizeTransaction } from '@/lib/financial-store';
 import {
   loadLocalState,
   saveLocalState,
@@ -31,7 +31,6 @@ interface FinanceContextType {
   deleteRecurring: (id: string) => Promise<void>;
   setInitialBalance: (person: Person, amount: number) => Promise<void>;
   setAccountBalance: (accountId: string, amount: number) => Promise<void>;
-  // ✅ NEW: set real (physical) balance for an account — persists to Supabase
   setRealBalance: (accountId: string, amount: number) => Promise<void>;
   setIncomeSources: (sources: IncomeSource[]) => Promise<void>;
   setExpenseSources: (sources: ExpenseSource[]) => Promise<void>;
@@ -56,6 +55,7 @@ function loadMissingLog(): MissingMoneyEntry[] {
     return raw ? JSON.parse(raw) : [];
   } catch { return []; }
 }
+
 function saveMissingLog(log: MissingMoneyEntry[]) {
   localStorage.setItem(MISSING_LOG_KEY, JSON.stringify(log));
 }
@@ -86,7 +86,10 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   // ─── TRANSACTIONS ──────────────────────────────────────────────────────────
 
   const addTransaction = useCallback(async (txn: Omit<Transaction, 'id'>) => {
-    const newTxn: Transaction = { ...txn, id: generateId() };
+    // ✅ FIX: normalize BEFORE storing — ensures type is always lowercase,
+    // amount always positive. Without this, 'Income' !== 'income' and
+    // getAccountBalance silently ignores the transaction → wrong balance.
+    const newTxn: Transaction = normalizeTransaction({ ...txn, id: generateId() });
     setState(s => ({ ...s, transactions: [...s.transactions, newTxn] }));
     setIsSyncing(true);
     await saveTransaction(newTxn);
@@ -101,12 +104,15 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const updateTransaction = useCallback(async (txn: Transaction) => {
+    // ✅ FIX: normalize on update too — editing a transaction must not
+    // reintroduce bad casing or negative amounts.
+    const normalized = normalizeTransaction(txn);
     setState(s => ({
       ...s,
-      transactions: s.transactions.map(t => t.id === txn.id ? txn : t),
+      transactions: s.transactions.map(t => t.id === normalized.id ? normalized : t),
     }));
     setIsSyncing(true);
-    await saveTransaction(txn);
+    await saveTransaction(normalized);
     setIsSyncing(false);
   }, []);
 
@@ -114,7 +120,9 @@ export function FinanceProvider({ children }: { children: React.ReactNode }) {
 
   const setBudget = useCallback(async (category: string, amount: number, year: number, month: number) => {
     setState(s => {
-      const existing = s.budgets.findIndex(b => b.category === category && b.year === year && b.month === month);
+      const existing = s.budgets.findIndex(
+        b => b.category === category && b.year === year && b.month === month,
+      );
       const budgets = [...s.budgets];
       if (existing >= 0) budgets[existing] = { category, amount, year, month };
       else budgets.push({ category, amount, year, month });
