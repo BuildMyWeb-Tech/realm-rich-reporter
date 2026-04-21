@@ -345,14 +345,14 @@ export default function SettingsPage() {
       </Section>
 
       {/* ── RECURRING ENTRIES — Now uses RecurringManager ─────────── */}
-      <Section title="Recurring Transactions" icon={<Repeat className="h-4 w-4 text-primary" />} defaultOpen={false}>
+      {/* <Section title="Recurring Transactions" icon={<Repeat className="h-4 w-4 text-primary" />} defaultOpen={false}>
         <div className="mt-2">
           <RecurringManager />
         </div>
-      </Section>
+      </Section> */}
 
       {/* ── DATA MANAGEMENT ──────────────────────────────────────── */}
-      <Section title="Data Management">
+      {/* <Section title="Data Management">
         <div className="flex gap-2 mt-2">
           <Button onClick={exportData} variant="outline" className="flex-1" size="sm">
             <Download className="h-4 w-4 mr-1" /> Export JSON
@@ -364,7 +364,7 @@ export default function SettingsPage() {
             </label>
           </div>
         </div>
-      </Section>
+      </Section> */}
 
       {/* ── DELETE CONFIRMATIONS ─────────────────────────────────── */}
       <AlertDialog open={!!deleteIncomeTarget} onOpenChange={o => { if (!o) setDeleteIncomeTarget(null); }}>

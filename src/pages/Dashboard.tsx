@@ -109,12 +109,13 @@ export default function Dashboard() {
       {/* ── Stats Grid: Opening | Income | Expenses | Balance ── */}
       <div className="grid grid-cols-2 gap-3">
         {/* Opening */}
-        <div className="glass-card rounded-xl p-3 bg-muted/40">
-          <div className="flex items-center gap-2 mb-1">
-            <Landmark className="h-4 w-4 opacity-70 text-muted-foreground" />
-            <span className="text-xs text-muted-foreground">Opening</span>
+       
+<div className="stat-card rounded-xl text-primary-foreground bg-info">
+              <div className="flex items-center gap-2 mb-1">
+            <TrendingUp className="h-4 w-4 opacity-80" />
+            <span className="text-xs opacity-90">Opening</span>
           </div>
-          <p className="text-lg font-bold text-foreground">{fmt(openingBalance)}</p>
+          <p className="text-lg font-bold">{fmt(openingBalance)}</p>
         </div>
 
         {/* Income */}
@@ -302,7 +303,7 @@ export default function Dashboard() {
       </div>
 
       {/* ── Issues Panel ── */}
-      {issues.length > 0 && (
+      {/* {issues.length > 0 && (
         <div className={cn(
           'glass-card rounded-xl p-4',
           issues.some(i => i.severity === 'error') ? 'border border-destructive/30' : 'border border-warning/30',
@@ -347,7 +348,7 @@ export default function Dashboard() {
             </div>
           )}
         </div>
-      )}
+      )} */}
 
       {/* Budget Alerts */}
       {topOverspend.length > 0 && (

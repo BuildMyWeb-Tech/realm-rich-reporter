@@ -275,7 +275,7 @@ export default function IncomePage() {
       </div>
 
       {/* Analytics toggle */}
-      <button
+      {/* <button
         onClick={() => setShowAnalytics(o => !o)}
         className={cn(
           'w-full rounded-xl border px-4 py-2.5 text-xs font-semibold flex items-center justify-center gap-2 transition-all',
@@ -286,7 +286,7 @@ export default function IncomePage() {
       >
         <BarChart2 className="h-3.5 w-3.5" />
         {showAnalytics ? 'Hide Analytics' : 'Show Analytics (Income Charts)'}
-      </button>
+      </button> */}
 
       {showAnalytics && <AnalyticsCharts timeRange={timeRange} />}
 

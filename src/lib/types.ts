@@ -39,7 +39,7 @@ export function getBankAccounts(): Account[] {
 
 export const HOME_INCOME_CATEGORIES = [
   'Appa Salary', 'Ajai Salary', 'Vaati', 'Allowance',
-  'Govt Ration Income', 'Ration Income', 'Mill SVRM Mann.',
+   'Ration Income', 'Mill SVRM Mann.',
 ] as const;
 
 export const DEBT_INCOME_CATEGORIES = [
@@ -153,7 +153,7 @@ export const DEFAULT_BUDGETS: Record<string, number> = {
 
 export const DEFAULT_EXPECTED_INCOME: Record<string, number> = {
   'Appa Salary': 10200, 'Ajai Salary': 15000, 'Vaati': 2000,
-  'Allowance': 2500, 'Govt Ration Income': 0, 'Ration Income': 380,
+  'Allowance': 2500, 'Ration Income': 380,
   'Mill SVRM Mann.': 150, 'Ajai Extra': 25000, 'Appa Extra Earnings': 0,
   'Home Extra': 0, 'BMW': 10000, 'Debt Income': 0, 'Other Income': 0,
 };

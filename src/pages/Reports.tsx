@@ -24,22 +24,24 @@ import { toast } from 'sonner';
 
 type ReportTab = 'summary' | 'analytics';
 
+// Grid column layout — shared by header + every row so alignment is pixel-perfect
+// [account-name] [opening] [closing] [real-bal] [diff]
+const COL_GRID = 'grid grid-cols-[1fr_68px_68px_78px_60px] gap-x-2 items-center';
+
 export default function Reports() {
   const { state, selectedYear, selectedMonth, setRealBalance, isSyncing } = useFinance();
   const [activeTab, setActiveTab] = useState<ReportTab>('summary');
 
-  // ── Real balance edit state (UI only — actual values come from state.realBalances) ──
+  // ── Real balance edit state ────────────────────────────────────────────────
   const [editingRealBal, setEditingRealBal] = useState<string | null>(null);
   const [editRealValue, setEditRealValue] = useState('');
 
-  // ✅ All values read directly from state (loaded from Supabase)
   const realBalances = state.realBalances ?? {};
 
   const handleStartEditReal = (accId: string) => {
     const current = realBalances[accId];
     const accBal = getAccountBalance(state.transactions, accId, selectedYear, selectedMonth, state.accountBalances);
     setEditingRealBal(accId);
-    // Pre-fill with existing real balance if set, otherwise use closing balance as starting point
     setEditRealValue(String(current !== undefined ? current : accBal.closing));
   };
 
@@ -47,19 +49,20 @@ export default function Reports() {
     const val = Number(editRealValue);
     if (isNaN(val)) { toast.error('Enter a valid number'); return; }
     setEditingRealBal(null);
-    // ✅ Calls context → saveConfig('realBalances', ...) → Supabase
     await setRealBalance(accId, val);
     toast.success('Real balance saved to cloud ☁️');
   }, [editRealValue, setRealBalance]);
 
   const handleCancelEdit = () => setEditingRealBal(null);
 
+  // ── Core data ──────────────────────────────────────────────────────────────
   const totals    = getTotalBalance(state.transactions, selectedYear, selectedMonth, state.initialBalances, state.accountBalances);
   const homeDebt  = getHomeDebtSummary(state.transactions, selectedYear, selectedMonth);
   const monthTxns = getMonthTransactions(state.transactions, selectedYear, selectedMonth);
 
   const cashAccounts = getCashAccounts();
   const bankAccounts = getBankAccounts();
+
   const getAccBal = (id: string) =>
     getAccountBalance(state.transactions, id, selectedYear, selectedMonth, state.accountBalances);
 
@@ -70,9 +73,21 @@ export default function Reports() {
   const overallOpening     = totalCashOpening + totalOnlineOpening;
   const overallClosing     = totalCashClosing + totalOnlineClosing;
 
-  // ── Missing Money from Real Balance differences ────────────────────────────
-  // difference per account = real - system_closing
-  // negative = money is missing; positive = extra money found
+  // ── Total real balances — only shown when ALL accounts in group have real set ──
+  const allCashHaveReal  = cashAccounts.every(a => realBalances[a.id] !== undefined);
+  const allBankHaveReal  = bankAccounts.every(a => realBalances[a.id] !== undefined);
+
+  const totalCashReal  = allCashHaveReal
+    ? cashAccounts.reduce((s, a) => rc(s + (realBalances[a.id] ?? 0)), 0)
+    : undefined;
+  const totalBankReal  = allBankHaveReal
+    ? bankAccounts.reduce((s, a) => rc(s + (realBalances[a.id] ?? 0)), 0)
+    : undefined;
+  const overallReal    = totalCashReal !== undefined && totalBankReal !== undefined
+    ? rc(totalCashReal + totalBankReal)
+    : undefined;
+
+  // ── Missing money (sum of all real-balance differences) ───────────────────
   const missingMoneyFromReal = useMemo(() => {
     let total = 0;
     for (const acc of ACCOUNTS) {
@@ -97,41 +112,73 @@ export default function Reports() {
   const savingsRate = totals.income > 0
     ? Math.round(((totals.income - totals.expense) / totals.income) * 100) : 0;
 
-  // ── Account Balance Row with Real Balance + Difference ────────────────────
-  function AccRow({ accId, label, opening, closing, bold = false }: {
-    accId?: string; label: string; opening: number; closing: number; bold?: boolean;
+  // ── Account Balance Row ────────────────────────────────────────────────────
+  function AccRow({
+    accId,
+    label,
+    opening,
+    closing,
+    bold = false,
+    realOverride,
+    diffOverride,
+  }: {
+    accId?: string;
+    label: string;
+    opening: number;
+    closing: number;
+    bold?: boolean;
+    realOverride?: number;
+    diffOverride?: number;
   }) {
-    const realVal = accId !== undefined ? realBalances[accId] : undefined;
-    // difference = real − system_closing (positive = extra, negative = missing)
-    const difference = realVal !== undefined ? rc(realVal - closing) : null;
+    const realVal  = accId !== undefined ? realBalances[accId] : realOverride;
+    const difference =
+      accId !== undefined && realVal !== undefined
+        ? rc(realVal - closing)
+        : diffOverride !== undefined
+          ? diffOverride
+          : null;
     const isEditing = accId !== undefined && editingRealBal === accId;
 
     return (
       <div className={cn(
-        'flex items-center justify-between text-xs py-1.5',
-        bold ? 'font-bold border-t border-border/40 pt-2 mt-1' : '',
+        COL_GRID,
+        'text-xs py-2',
+        bold
+          ? 'font-bold border-t border-border/50 mt-1 pt-2.5 bg-muted/30 rounded-lg px-2 -mx-2'
+          : 'px-1',
       )}>
-        <span className={cn('flex-1 min-w-0 truncate', bold ? 'text-foreground' : 'text-muted-foreground')}>
+        {/* Account name */}
+        <span className={cn(
+          'truncate leading-tight',
+          bold ? 'text-foreground' : 'text-muted-foreground',
+        )}>
           {label}
         </span>
 
         {/* Opening */}
-        <span className="w-18 tabular-nums text-right shrink-0">{fmt(opening)}</span>
+        <span className={cn(
+          'tabular-nums text-right',
+          bold ? 'text-foreground' : 'text-muted-foreground',
+        )}>
+          {fmt(opening)}
+        </span>
 
         {/* Closing */}
-        <span className={cn('w-18 tabular-nums text-right ml-3 shrink-0',
-          !bold && closing < 0 ? 'text-destructive' : '')}>
+        <span className={cn(
+          'tabular-nums text-right font-medium',
+          !bold && closing < 0 ? 'text-destructive' : 'text-foreground',
+        )}>
           {fmt(closing)}
         </span>
 
-        {/* Real Balance — editable, saves to DB */}
-        <div className="w-24 ml-3 flex items-center justify-end shrink-0">
+        {/* Real Balance — editable per-account, aggregate for totals */}
+        <div className="flex items-center justify-end min-w-0">
           {accId !== undefined ? (
             isEditing ? (
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-0.5">
                 <Input
                   type="number"
-                  className="w-16 h-6 text-xs px-1 tabular-nums"
+                  className="w-14 h-6 text-xs px-1 tabular-nums text-right"
                   value={editRealValue}
                   onChange={e => setEditRealValue(e.target.value)}
                   onKeyDown={e => {
@@ -142,39 +189,49 @@ export default function Reports() {
                 />
                 <button
                   onClick={() => handleSaveReal(accId)}
-                  className="text-success shrink-0"
-                  title="Save to cloud"
+                  className="text-success shrink-0 p-0.5"
+                  title="Save"
                 >
                   <Check className="h-3 w-3" />
                 </button>
-                <button onClick={handleCancelEdit} className="text-muted-foreground shrink-0">
+                <button
+                  onClick={handleCancelEdit}
+                  className="text-muted-foreground shrink-0 p-0.5"
+                >
                   <X className="h-3 w-3" />
                 </button>
               </div>
             ) : (
               <button
-                className="flex items-center gap-0.5 group text-right tabular-nums hover:text-primary transition-colors"
+                className="flex items-center gap-0.5 group tabular-nums hover:text-primary transition-colors text-right"
                 onClick={() => handleStartEditReal(accId)}
-                title="Click to edit real balance (saves to DB)"
+                title="Tap to set real balance"
               >
-                <span className={cn(realVal === undefined ? 'text-muted-foreground/50 italic' : '')}>
+                <span className={cn(
+                  'text-right',
+                  realVal === undefined ? 'text-muted-foreground/40 italic text-[10px]' : 'text-foreground',
+                )}>
                   {realVal !== undefined ? fmt(realVal) : 'Set'}
                 </span>
-                <Pencil className="h-2.5 w-2.5 opacity-0 group-hover:opacity-60 shrink-0 ml-0.5" />
+                <Pencil className="h-2.5 w-2.5 opacity-0 group-hover:opacity-50 shrink-0 ml-0.5" />
               </button>
             )
+          ) : realOverride !== undefined ? (
+            <span className="tabular-nums text-right font-medium">{fmt(realOverride)}</span>
           ) : (
-            <span className="text-muted-foreground">—</span>
+            <span className="text-muted-foreground/30 text-[10px]">—</span>
           )}
         </div>
 
-        {/* Difference column */}
-        <div className="w-20 ml-2 text-right tabular-nums shrink-0">
+        {/* Diff = Real − Closing */}
+        <div className="text-right tabular-nums">
           {difference !== null ? (
-            <span className={cn('font-semibold',
+            <span className={cn(
+              'font-semibold text-[11px]',
               difference > 0  ? 'text-success' :
               difference < 0  ? 'text-destructive' :
-              'text-muted-foreground')}>
+              'text-muted-foreground',
+            )}>
               {difference > 0
                 ? `+${fmt(difference)}`
                 : difference < 0
@@ -182,7 +239,7 @@ export default function Reports() {
                   : '₹0'}
             </span>
           ) : (
-            <span className="text-muted-foreground/40">—</span>
+            <span className="text-muted-foreground/30 text-[10px]">—</span>
           )}
         </div>
       </div>
@@ -191,6 +248,7 @@ export default function Reports() {
 
   return (
     <div className="pb-20 px-4 pt-4 max-w-lg mx-auto space-y-4 animate-slide-up">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold text-foreground">Monthly Summary</h1>
         <MonthSelector />
@@ -212,13 +270,16 @@ export default function Reports() {
       {/* Tab switcher */}
       <div className="flex gap-1 bg-muted/30 rounded-xl p-1">
         {(['summary', 'analytics'] as ReportTab[]).map(tab => (
-          <button key={tab} onClick={() => setActiveTab(tab)}
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
             className={cn(
               'flex-1 text-xs font-semibold rounded-lg py-2 transition-all flex items-center justify-center gap-1',
               activeTab === tab
                 ? 'bg-card text-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground',
-            )}>
+            )}
+          >
             {tab === 'summary'
               ? '📊 Monthly Summary'
               : <><BarChart2 className="h-3 w-3" /> Overspend Analytics</>}
@@ -228,7 +289,7 @@ export default function Reports() {
 
       {activeTab === 'analytics' ? <OverspendAnalytics /> : (
         <>
-          {/* Balance Flow */}
+          {/* ── Balance Flow ───────────────────────────────────────────────── */}
           <div className="glass-card rounded-2xl p-5 border border-primary/20">
             <h2 className="text-xs font-semibold text-primary uppercase tracking-widest mb-4">Balance Flow</h2>
             <div className="space-y-3">
@@ -276,7 +337,7 @@ export default function Reports() {
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-muted-foreground">vs last month</p>
-                  <p className={cn('text-sm font-semibold flex items-center gap-1', diff >= 0 ? 'text-success' : 'text-destructive')}>
+                  <p className={cn('text-sm font-semibold flex items-center gap-1 justify-end', diff >= 0 ? 'text-success' : 'text-destructive')}>
                     {diff >= 0 ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
                     {fmtSigned(diff)}
                   </p>
@@ -285,7 +346,7 @@ export default function Reports() {
             </div>
           </div>
 
-          {/* Stat cards */}
+          {/* ── Stat cards ─────────────────────────────────────────────────── */}
           <div className="grid grid-cols-2 gap-3">
             <div className="glass-card rounded-xl p-4">
               <p className="text-xs text-muted-foreground mb-1">Total Income</p>
@@ -317,7 +378,7 @@ export default function Reports() {
             </div>
           </div>
 
-          {/* Savings rate */}
+          {/* ── Savings rate ───────────────────────────────────────────────── */}
           <div className="glass-card rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <p className="text-sm font-semibold">Savings Rate</p>
@@ -328,10 +389,12 @@ export default function Reports() {
                 {savingsRate}%
               </span>
             </div>
-            <Progress value={Math.max(0, Math.min(savingsRate, 100))}
+            <Progress
+              value={Math.max(0, Math.min(savingsRate, 100))}
               className={cn('h-3',
                 savingsRate >= 20 ? '[&>div]:bg-success' :
-                savingsRate >= 0  ? '[&>div]:bg-warning' : '[&>div]:bg-destructive')} />
+                savingsRate >= 0  ? '[&>div]:bg-warning' : '[&>div]:bg-destructive')}
+            />
             <div className="flex justify-between text-xs text-muted-foreground mt-2">
               <span className="tabular-nums">
                 Net: {totals.income - totals.expense >= 0 ? '+' : ''}{fmt(totals.income - totals.expense)}
@@ -340,7 +403,7 @@ export default function Reports() {
             </div>
           </div>
 
-          {/* Home vs Debt */}
+          {/* ── Home vs Debt ───────────────────────────────────────────────── */}
           <div className="glass-card rounded-xl p-4">
             <h2 className="text-sm font-semibold mb-4">Home vs Debt Split</h2>
             <div className="rounded-xl bg-success/8 p-3 mb-3">
@@ -349,8 +412,14 @@ export default function Reports() {
                 <span className="text-sm font-semibold text-success">Home</span>
               </div>
               <div className="space-y-1 text-xs">
-                <div className="flex justify-between"><span className="text-muted-foreground">Income</span><span className="font-medium text-success tabular-nums">+{fmt(homeDebt.homeIncome)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Expense</span><span className="font-medium text-destructive tabular-nums">-{fmt(homeDebt.homeExpense)}</span></div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Income</span>
+                  <span className="font-medium text-success tabular-nums">+{fmt(homeDebt.homeIncome)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Expense</span>
+                  <span className="font-medium text-destructive tabular-nums">-{fmt(homeDebt.homeExpense)}</span>
+                </div>
                 <div className="flex justify-between border-t border-border/40 pt-1 font-bold text-sm">
                   <span>Balance</span>
                   <span className={cn('tabular-nums', homeDebt.homeBalance >= 0 ? 'text-success' : 'text-destructive')}>
@@ -365,8 +434,14 @@ export default function Reports() {
                 <span className="text-sm font-semibold text-warning">Debt</span>
               </div>
               <div className="space-y-1 text-xs">
-                <div className="flex justify-between"><span className="text-muted-foreground">Income</span><span className="font-medium text-success tabular-nums">+{fmt(homeDebt.debtIncome)}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">Expense</span><span className="font-medium text-destructive tabular-nums">-{fmt(homeDebt.debtExpense)}</span></div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Income</span>
+                  <span className="font-medium text-success tabular-nums">+{fmt(homeDebt.debtIncome)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Expense</span>
+                  <span className="font-medium text-destructive tabular-nums">-{fmt(homeDebt.debtExpense)}</span>
+                </div>
                 <div className="flex justify-between border-t border-border/40 pt-1 font-bold text-sm">
                   <span>Balance</span>
                   <span className={cn('tabular-nums', homeDebt.debtBalance >= 0 ? 'text-success' : 'text-destructive')}>
@@ -376,56 +451,128 @@ export default function Reports() {
               </div>
             </div>
             <div className="mt-3 pt-3 border-t border-border/50 space-y-1">
-              <div className="flex justify-between text-sm font-bold"><span>Total Income</span><span className="text-success tabular-nums">+{fmt(homeDebt.totalIncome)}</span></div>
-              <div className="flex justify-between text-sm font-bold"><span>Total Expense</span><span className="text-destructive tabular-nums">-{fmt(homeDebt.totalExpense)}</span></div>
+              <div className="flex justify-between text-sm font-bold">
+                <span>Total Income</span>
+                <span className="text-success tabular-nums">+{fmt(homeDebt.totalIncome)}</span>
+              </div>
+              <div className="flex justify-between text-sm font-bold">
+                <span>Total Expense</span>
+                <span className="text-destructive tabular-nums">-{fmt(homeDebt.totalExpense)}</span>
+              </div>
               <div className="flex justify-between text-base font-bold text-primary pt-1 border-t border-border/50">
                 <span>Net Balance</span>
-                <span className="tabular-nums">{homeDebt.totalBalance >= 0 ? '+' : '-'}{fmt(homeDebt.totalBalance)}</span>
+                <span className="tabular-nums">
+                  {homeDebt.totalBalance >= 0 ? '+' : '-'}{fmt(homeDebt.totalBalance)}
+                </span>
               </div>
             </div>
           </div>
 
-          {/* ── Account Balances with Real Balance + Difference ── */}
+          {/* ── Account Balances table ─────────────────────────────────────── */}
           <div className="glass-card rounded-xl p-4">
-            <h2 className="text-sm font-semibold mb-1">Account Balances</h2>
-            <p className="text-[10px] text-muted-foreground mb-3">
-              Tap any value in "Real Balance" to enter the actual physical amount.
-              Saves to cloud ☁️ — available on all devices. Difference = Real − System.
+            <h2 className="text-sm font-semibold mb-0.5">Account Balances</h2>
+            <p className="text-[10px] text-muted-foreground mb-4 leading-relaxed">
+              Tap <span className="font-medium text-foreground/60">Real Bal</span> to enter the actual physical
+              amount — saves to cloud ☁️. <span className="font-medium">Diff = Real − System closing.</span>{' '}
+              Totals appear once all accounts in the group have a real balance set.
             </p>
 
             {/* Column headers */}
-            <div className="flex items-center justify-between text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 border-b border-border/30 pb-1.5">
-              <span className="flex-1">Account</span>
-              <span className="w-18 text-right shrink-0">Opening</span>
-              <span className="w-18 text-right ml-3 shrink-0">Closing</span>
-              <span className="w-24 text-right ml-3 shrink-0">Real Bal</span>
-              <span className="w-20 text-right ml-2 shrink-0">Diff</span>
+            <div className={cn(
+              COL_GRID,
+              'text-[10px] font-semibold text-muted-foreground uppercase tracking-wider',
+              'border-b border-border/40 pb-2 mb-1 px-1',
+            )}>
+              <span>Account</span>
+              <span className="text-right">Opening</span>
+              <span className="text-right">Closing</span>
+              <span className="text-right">Real Bal</span>
+              <span className="text-right">Diff</span>
             </div>
 
-            {/* CASH */}
-            <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1 mt-2">Cash</p>
-            <div className="space-y-0.5 mb-3">
-              {cashAccounts.map(acc => {
-                const bal = getAccBal(acc.id);
-                return <AccRow key={acc.id} accId={acc.id} label={acc.name} opening={bal.opening} closing={bal.closing} />;
-              })}
-              <AccRow label="Total Cash" opening={totalCashOpening} closing={totalCashClosing} bold />
+            {/* ── CASH ── */}
+            <div className="mt-3 mb-1">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest px-1 mb-1">
+                Cash
+              </p>
+              <div className="space-y-0">
+                {cashAccounts.map(acc => {
+                  const bal = getAccBal(acc.id);
+                  return (
+                    <AccRow
+                      key={acc.id}
+                      accId={acc.id}
+                      label={acc.name}
+                      opening={bal.opening}
+                      closing={bal.closing}
+                    />
+                  );
+                })}
+                <AccRow
+                  label="Total Cash"
+                  opening={totalCashOpening}
+                  closing={totalCashClosing}
+                  bold
+                  realOverride={totalCashReal}
+                  diffOverride={
+                    totalCashReal !== undefined
+                      ? rc(totalCashReal - totalCashClosing)
+                      : undefined
+                  }
+                />
+              </div>
             </div>
 
-            {/* BANK */}
-            <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide mb-1">Bank / Online</p>
-            <div className="space-y-0.5 mb-3">
-              {bankAccounts.map(acc => {
-                const bal = getAccBal(acc.id);
-                return <AccRow key={acc.id} accId={acc.id} label={acc.name} opening={bal.opening} closing={bal.closing} />;
-              })}
-              <AccRow label="Total Bank" opening={totalOnlineOpening} closing={totalOnlineClosing} bold />
+            {/* ── BANK / ONLINE ── */}
+            <div className="mt-4 mb-1">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest px-1 mb-1">
+                Bank / Online
+              </p>
+              <div className="space-y-0">
+                {bankAccounts.map(acc => {
+                  const bal = getAccBal(acc.id);
+                  return (
+                    <AccRow
+                      key={acc.id}
+                      accId={acc.id}
+                      label={acc.name}
+                      opening={bal.opening}
+                      closing={bal.closing}
+                    />
+                  );
+                })}
+                <AccRow
+                  label="Total Bank"
+                  opening={totalOnlineOpening}
+                  closing={totalOnlineClosing}
+                  bold
+                  realOverride={totalBankReal}
+                  diffOverride={
+                    totalBankReal !== undefined
+                      ? rc(totalBankReal - totalOnlineClosing)
+                      : undefined
+                  }
+                />
+              </div>
             </div>
 
-            {/* OVERALL */}
-            <AccRow label="Overall Total" opening={overallOpening} closing={overallClosing} bold />
+            {/* ── OVERALL ── */}
+            <div className="mt-2">
+              <AccRow
+                label="Overall Total"
+                opening={overallOpening}
+                closing={overallClosing}
+                bold
+                realOverride={overallReal}
+                diffOverride={
+                  overallReal !== undefined
+                    ? rc(overallReal - overallClosing)
+                    : undefined
+                }
+              />
+            </div>
 
-            {/* Missing / Extra Money Summary */}
+            {/* ── Missing / Extra Money summary ── */}
             {missingMoneyFromReal !== 0 && (
               <div className={cn(
                 'mt-4 rounded-xl p-3 text-xs flex items-center justify-between gap-3',
@@ -434,14 +581,18 @@ export default function Reports() {
                   : 'bg-warning/10 border border-warning/20',
               )}>
                 <div className="flex items-center gap-2 min-w-0">
-                  <AlertCircle className={cn('h-4 w-4 shrink-0',
-                    missingMoneyFromReal < 0 ? 'text-destructive' : 'text-warning')} />
+                  <AlertCircle className={cn(
+                    'h-4 w-4 shrink-0',
+                    missingMoneyFromReal < 0 ? 'text-destructive' : 'text-warning',
+                  )} />
                   <div className="min-w-0">
-                    <p className={cn('font-semibold',
-                      missingMoneyFromReal < 0 ? 'text-destructive' : 'text-warning')}>
+                    <p className={cn(
+                      'font-semibold',
+                      missingMoneyFromReal < 0 ? 'text-destructive' : 'text-warning',
+                    )}>
                       {missingMoneyFromReal < 0 ? '⚠️ Missing Money' : '✨ Extra Money Found'}
                     </p>
-                    <p className="text-muted-foreground text-[10px] mt-0.5 truncate">
+                    <p className="text-muted-foreground text-[10px] mt-0.5">
                       Sum of all Real Balance differences
                     </p>
                   </div>
