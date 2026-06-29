@@ -1,7 +1,10 @@
-import BulkUploadTransactions from "@/components/BulkUploadTransactions";
-import { useFinance } from "@/contexts/FinanceContext";
+/**
+ * BulkUploadPage.tsx
+ * Route: /bulk-upload
+ * Wraps the handwritten AI OCR upload component.
+ */
+import BulkUploadTransactions from '@/components/BulkUploadTransactions';
 
 export default function BulkUploadPage() {
-  const { addTransaction } = useFinance();
-  return <BulkUploadTransactions addTransaction={addTransaction} />;
+  return <BulkUploadTransactions />;
 }

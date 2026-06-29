@@ -1,764 +1,900 @@
-import React, { useState, useCallback, useRef } from "react";
-import * as XLSX from "xlsx";
+/**
+ * BulkUploadTransactions.tsx
+ *
+ * Full handwritten-image → AI OCR → editable table → bulk save flow.
+ * Supports Claude AI, OpenAI GPT-4o, or Tesseract fallback via env vars.
+ */
+
+import React, { useState, useCallback, useRef } from 'react';
+import { useFinance } from '@/contexts/FinanceContext';
+import {
+  PERSONS, ACCOUNTS, HOME_INCOME_CATEGORIES, DEBT_INCOME_CATEGORIES,
+  EXPENSE_CATEGORIES, DEBT_EXPENSE_CATEGORIES,
+  Person, PaymentMode, HomeOrDebt, TransactionType,
+} from '@/lib/types';
+import type { Transaction } from '@/lib/types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
+import {
+  Upload, X, Sparkles, CheckCircle2, Loader2, Trash2,
+  AlertCircle, ImagePlus, ChevronDown, ChevronUp, Info,
+  Eye, RotateCcw,
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
+import { extractTransactionsFromImages, getActiveProviderName, DraftTransaction } from '@/lib/ai-ocr-provider';
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Person = "Appa" | "Ajai" | "Amma" | "Mauli" | "Home";
-
-type Transaction = {
-  date: string;
-  person: Person;
-  type: "income" | "expense" | "transfer";
-  category: string;
-  amount: number;
-  paymentMode: "cash" | "bank";
-  notes: string;
-  homeOrDebt: "home" | "debt";
+type UploadedImage = {
+  id: string;
+  file: File;
+  previewUrl: string;
+  base64: string;
+  mimeType: string;
+  status: 'ready' | 'processing' | 'done' | 'error';
 };
 
-/** After normalization every row has these lowercase underscore keys */
-type NormalizedRow = {
-  date: string;
-  account: string;
-  category: string;
-  subcategory: string;
-  note: string;
-  inr: string;
-  income_expense: string;
-  description: string;
-  amount: string;
-  currency: string;
+type EditableRow = DraftTransaction & {
+  _checked: boolean;
+  _hasError: boolean;
 };
 
-type ParseResult = {
-  transactions: Transaction[];
-  invalidRows: { row: number; reason: string; raw: Record<string, unknown> }[];
-};
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type ImportStatus = "idle" | "parsing" | "ready" | "importing" | "done" | "error";
+const ALL_CATS = [
+  ...HOME_INCOME_CATEGORIES,
+  ...DEBT_INCOME_CATEGORIES,
+  ...EXPENSE_CATEGORIES,
+  ...DEBT_EXPENSE_CATEGORIES,
+] as string[];
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const DEBT_KEYWORDS = ["loan", "emi", "debt", "gold loan", "loan repaid"];
-const PERSON_NAMES: Person[] = ["Appa", "Ajai", "Amma", "Mauli"];
-const CHUNK_SIZE = 100;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// KEY FIX: Normalize raw Excel headers to stable lowercase keys.
-// Handles: duplicate "Account" columns, extra spaces, BOM chars,
-//          slash variants in "Income/Expense", etc.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Maps any header variant → our internal NormalizedRow key.
- */
-const HEADER_ALIASES: Record<string, keyof NormalizedRow> = {
-  // Date
-  date: "date",
-
-  // Account — first occurrence wins; SheetJS renames dup cols to Account_1 etc.
-  account: "account",
-  account_1: "account",
-  account_2: "account",
-
-  // Category
-  category: "category",
-
-  // Subcategory
-  subcategory: "subcategory",
-  "sub category": "subcategory",
-  "sub-category": "subcategory",
-
-  // Note
-  note: "note",
-  notes: "note",
-
-  // INR column (the 6th column in your sheet)
-  inr: "inr",
-
-  // Income/Expense — many possible representations from different exports
-  "income/expense": "income_expense",
-  "income / expense": "income_expense",
-  "income-expense": "income_expense",
-  incomeexpense: "income_expense",
-  "income_expense": "income_expense",
-  type: "income_expense",
-  "transaction type": "income_expense",
-
-  // Description
-  description: "description",
-  desc: "description",
-
-  // Amount
-  amount: "amount",
-  amt: "amount",
-
-  // Currency
-  currency: "currency",
-};
-
-/** Strips BOM, trims, lowercases, collapses whitespace */
-function cleanHeader(raw: string): string {
-  return raw
-    .replace(/^\uFEFF/, "")          // BOM
-    .replace(/[^\x20-\x7E]/g, "")   // non-ASCII chars
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
+function getCatsForType(type: TransactionType, homeOrDebt: HomeOrDebt): string[] {
+  if (type === 'income')
+    return homeOrDebt === 'home'
+      ? [...HOME_INCOME_CATEGORIES]
+      : [...DEBT_INCOME_CATEGORIES];
+  if (type === 'expense')
+    return homeOrDebt === 'debt'
+      ? [...DEBT_EXPENSE_CATEGORIES]
+      : [...EXPENSE_CATEGORIES];
+  return [];
 }
 
-/**
- * Given a raw SheetJS row, return a NormalizedRow with stable keys.
- * Unknown columns are silently ignored.
- * For duplicate columns (e.g. two "Account" cols), the first mapped value wins.
- */
-function normalizeRow(raw: Record<string, unknown>): NormalizedRow {
-  const result: Partial<NormalizedRow> = {};
-
-  for (const [key, value] of Object.entries(raw)) {
-    const cleaned = cleanHeader(key);
-    const mapped = HEADER_ALIASES[cleaned];
-    if (mapped && result[mapped] === undefined) {
-      result[mapped] = String(value ?? "").trim();
-    }
-  }
-
-  return {
-    date: result.date ?? "",
-    account: result.account ?? "",
-    category: result.category ?? "",
-    subcategory: result.subcategory ?? "",
-    note: result.note ?? "",
-    inr: result.inr ?? "",
-    income_expense: result.income_expense ?? "",
-    description: result.description ?? "",
-    amount: result.amount ?? "",
-    currency: result.currency ?? "",
-  };
-}
-
-// ─── Date parser: "MM-DD-YYYY" → "YYYY-MM-DD" ────────────────────────────────
-
-function parseDate(raw: string): string | null {
-  const s = raw.trim();
-  if (!s) return null;
-
-  // MM-DD-YYYY  ← your primary format
-  const m1 = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
-  if (m1) return `${m1[3]}-${m1[1].padStart(2, "0")}-${m1[2].padStart(2, "0")}`;
-
-  // YYYY-MM-DD  ← already correct
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-
-  // MM/DD/YYYY
-  const m2 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m2) return `${m2[3]}-${m2[1].padStart(2, "0")}-${m2[2].padStart(2, "0")}`;
-
-  // Excel serial number (e.g. 45826)
-  const serial = Number(s);
-  if (!isNaN(serial) && serial > 40000 && serial < 60000) {
-    try {
-      const d = new Date(Math.round((serial - 25569) * 86400 * 1000));
-      const yyyy = d.getUTCFullYear();
-      const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-      const dd = String(d.getUTCDate()).padStart(2, "0");
-      return `${yyyy}-${mm}-${dd}`;
-    } catch {
-      return null;
-    }
-  }
-
-  return null;
-}
-
-// ─── Person detector ──────────────────────────────────────────────────────────
-
-function detectPerson(subcategory: string, note: string): Person {
-  const sub = subcategory.trim();
-  const n = note.toLowerCase();
-
-  for (const p of PERSON_NAMES) {
-    if (sub === p) return p;
-  }
-  if (sub === "Home") return "Home";
-
-  for (const p of PERSON_NAMES) {
-    if (n.includes(p.toLowerCase())) return p;
-  }
-
-  return "Appa";
-}
-
-// ─── Misc helpers ─────────────────────────────────────────────────────────────
-
-function getHomeOrDebt(category: string): "home" | "debt" {
-  const lower = category.toLowerCase();
-  return DEBT_KEYWORDS.some((kw) => lower.includes(kw)) ? "debt" : "home";
-}
-
-function parsePaymentMode(account: string): "cash" | "bank" {
-  return account.toLowerCase().trim() === "cash" ? "cash" : "bank";
-}
-
-function parseType(ie: string): "income" | "expense" | "transfer" | null {
-  const v = ie.toLowerCase().trim();
-  if (v === "income") return "income";
-  if (v === "expense") return "expense";
-  if (v === "transfer") return "transfer";
-  return null;
-}
-
-// ─── Row transformer ──────────────────────────────────────────────────────────
-
-function transformRow(
-  row: NormalizedRow,
-  rowIndex: number
-): { tx: Transaction } | { error: string } {
-  // Amount — prefer "amount" column, fall back to "inr"
-  const amountRaw = row.amount || row.inr;
-  const amount = parseFloat(amountRaw);
-  if (isNaN(amount) || amount <= 0) {
-    return { error: `Row ${rowIndex}: bad amount "${amountRaw}"` };
-  }
-
-  const date = parseDate(row.date);
-  if (!date) {
-    return { error: `Row ${rowIndex}: bad date "${row.date}"` };
-  }
-
-  const type = parseType(row.income_expense);
-  if (!type) {
-    return { error: `Row ${rowIndex}: unknown type "${row.income_expense}"` };
-  }
-
-  const category = row.category.trim() || "Others";
-  const notes = (row.note || row.description || "").trim();
-  const person = detectPerson(row.subcategory, notes);
-  const paymentMode = parsePaymentMode(row.account);
-  const homeOrDebt = getHomeOrDebt(category);
-
-  return {
-    tx: { date, person, type, category, amount, paymentMode, notes, homeOrDebt },
-  };
-}
-
-// ─── Async chunked parser ─────────────────────────────────────────────────────
-
-async function parseRowsAsync(
-  rows: Record<string, unknown>[],
-  onProgress: (pct: number) => void
-): Promise<ParseResult> {
-  const transactions: Transaction[] = [];
-  const invalidRows: ParseResult["invalidRows"] = [];
-  const total = rows.length;
-
-  for (let i = 0; i < total; i += CHUNK_SIZE) {
-    const chunk = rows.slice(i, i + CHUNK_SIZE);
-
-    for (let j = 0; j < chunk.length; j++) {
-      const rowIndex = i + j + 2;
-      const normalized = normalizeRow(chunk[j]);
-      const result = transformRow(normalized, rowIndex);
-
-      if ("tx" in result) {
-        transactions.push(result.tx);
-      } else {
-        invalidRows.push({ row: rowIndex, reason: result.error, raw: chunk[j] });
-        console.warn("[BulkUpload] Skipped:", result.error, "| normalized:", normalized);
-      }
-    }
-
-    onProgress(Math.round(((i + chunk.length) / total) * 100));
-    await new Promise((r) => setTimeout(r, 0)); // yield to UI thread
-  }
-
-  return { transactions, invalidRows };
-}
-
-// ─── Excel file reader ────────────────────────────────────────────────────────
-
-function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
-  return new Promise((resolve, reject) => {
+function toBase64(file: File): Promise<string> {
+  return new Promise((res, rej) => {
     const reader = new FileReader();
-    reader.onload = (e) => resolve(e.target!.result as ArrayBuffer);
-    reader.onerror = () => reject(new Error("File read failed"));
-    reader.readAsArrayBuffer(file);
+    reader.onload = () => {
+      const result = reader.result as string;
+      res(result.split(',')[1]); // strip data:...;base64, prefix
+    };
+    reader.onerror = rej;
+    reader.readAsDataURL(file);
   });
 }
 
-function parseExcelFile(buffer: ArrayBuffer): {
-  rows: Record<string, unknown>[];
-  detectedHeaders: string[];
-} {
-  const wb = XLSX.read(buffer, { type: "array", raw: false, cellText: true });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
-    raw: false,
-    defval: "",
-  });
-  const detectedHeaders = rows.length > 0 ? Object.keys(rows[0]) : [];
-  return { rows, detectedHeaders };
+function rowHasError(row: EditableRow): boolean {
+  if (!row.date || !row.date.match(/^\d{4}-\d{2}-\d{2}$/)) return true;
+  if (!row.person) return true;
+  if (!row.amount || row.amount <= 0) return true;
+  if (row.type !== 'transfer' && !row.category) return true;
+  return false;
 }
 
-// ─── Summary ──────────────────────────────────────────────────────────────────
-
-function calcSummary(txs: Transaction[]) {
-  return txs.reduce(
-    (acc, t) => {
-      if (t.type === "income") acc.income += t.amount;
-      else if (t.type === "expense") acc.expense += t.amount;
-      return acc;
-    },
-    { income: 0, expense: 0 }
-  );
-}
-
-function fmt(n: number) {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(n);
-}
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function Toast({ message, type }: { message: string; type: "success" | "error" | "info" }) {
-  const colors = {
-    success: "bg-emerald-600 text-white",
-    error: "bg-red-600 text-white",
-    info: "bg-slate-700 text-white",
+function draftToTransaction(d: DraftTransaction): Omit<Transaction, 'id'> {
+  // IMPORTANT: The existing system uses 0-indexed months throughout
+  // (TransactionForm: d.getMonth(), FinanceContext: now.getMonth())
+  // Must match — do NOT use getMonth() + 1
+  const dateObj = new Date(d.date);
+  return {
+    date: d.date,
+    year: dateObj.getFullYear(),
+    month: dateObj.getMonth(),   // 0-indexed: Jan=0, Jun=5, Jul=6 — matches rest of app
+    person: d.person,
+    type: d.type,
+    category: d.category,
+    amount: d.amount,
+    paymentMode: d.paymentMode,
+    notes: d.notes,
+    transferTo: d.transferTo,
+    accountId: d.accountId,
+    transferToAccountId: d.transferToAccountId,
+    homeOrDebt: d.homeOrDebt,
   };
-  return (
-    <div
-      style={{ animation: "slideUp 0.3s ease" }}
-      className={`fixed bottom-6 right-6 z-50 px-5 py-3 rounded-xl shadow-2xl text-sm font-semibold flex items-center gap-2 ${colors[type]}`}
-    >
-      {type === "success" && "✅ "}
-      {type === "error" && "❌ "}
-      {type === "info" && "ℹ️ "}
-      {message}
-    </div>
-  );
 }
 
-function StatCard({ label, value, color }: { label: string; value: string; color: string }) {
-  return (
-    <div className={`rounded-2xl p-4 flex flex-col gap-1 ${color}`}>
-      <span className="text-xs font-semibold uppercase tracking-widest opacity-70">{label}</span>
-      <span className="text-xl font-bold">{value}</span>
-    </div>
-  );
-}
+// ─── Row Editor (inline table row) ───────────────────────────────────────────
 
-function ProgressBar({ pct, color }: { pct: number; color: string }) {
-  return (
-    <div>
-      <div className="w-full bg-slate-700 rounded-full h-2.5 overflow-hidden">
-        <div
-          className={`h-2.5 rounded-full bg-gradient-to-r ${color} transition-all duration-150`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <p className="text-xs text-slate-500 text-right mt-1">{pct}%</p>
-    </div>
-  );
-}
-
-const BADGE_COLORS: Record<string, string> = {
-  violet: "bg-violet-900/50 text-violet-300",
-  emerald: "bg-emerald-900/50 text-emerald-400",
-  red: "bg-red-900/50 text-red-400",
-  amber: "bg-amber-900/50 text-amber-300",
-  blue: "bg-blue-900/50 text-blue-300",
-  rose: "bg-rose-900/50 text-rose-300",
-  slate: "bg-slate-700 text-slate-400",
-};
-
-function Badge({ color, children }: { color: string; children: React.ReactNode }) {
-  return (
-    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${BADGE_COLORS[color] ?? BADGE_COLORS.slate}`}>
-      {children}
-    </span>
-  );
-}
-
-/** Collapsible debug panel — shows what SheetJS actually detected */
-function DebugPanel({
-  headers,
-  sampleRow,
+function RowEditor({
+  row,
+  index,
+  onUpdate,
+  onDelete,
 }: {
-  headers: string[];
-  sampleRow: Record<string, unknown> | undefined;
+  row: EditableRow;
+  index: number;
+  onUpdate: (id: string, patch: Partial<EditableRow>) => void;
+  onDelete: (id: string) => void;
 }) {
-  const [open, setOpen] = useState(true); // open by default when shown
+  const up = (patch: Partial<EditableRow>) => onUpdate(row._draftId, patch);
+  const personAccounts = ACCOUNTS.filter(a => a.person === row.person);
+  const toAccounts = row.transferTo ? ACCOUNTS.filter(a => a.person === row.transferTo) : [];
+  const cats = getCatsForType(row.type, row.homeOrDebt);
+
+  const cellCls = 'px-1.5 py-1';
+
   return (
-    <div className="rounded-2xl border border-amber-800/50 bg-amber-950/20 overflow-hidden">
-      <button
-        className="w-full flex items-center justify-between px-4 py-3 text-amber-400 text-xs font-semibold hover:bg-amber-900/20 transition"
-        onClick={() => setOpen((o) => !o)}
-      >
-        <span>🔍 Debug — Detected {headers.length} Excel headers</span>
-        <span>{open ? "▲ hide" : "▼ show"}</span>
-      </button>
-      {open && (
-        <div className="px-4 pb-4 space-y-3">
-          <p className="text-[11px] text-amber-600">
-            Green = successfully mapped to a field. Grey = ignored (not in alias table).
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {headers.map((h) => {
-              const mapped = HEADER_ALIASES[cleanHeader(h)];
-              return (
-                <span
-                  key={h}
-                  className={`px-2 py-1 rounded-lg text-[11px] font-mono ${
-                    mapped
-                      ? "bg-emerald-900/50 text-emerald-300"
-                      : "bg-slate-800 text-slate-500"
-                  }`}
-                  title={mapped ? `→ ${mapped}` : "not mapped"}
-                >
-                  "{h}"
-                  {mapped && <span className="text-emerald-600 ml-1"> → {mapped}</span>}
-                </span>
-              );
-            })}
+    <tr className={cn(
+      'border-b border-border/40 hover:bg-muted/20 transition-colors text-xs',
+      row._hasError && 'bg-destructive/5',
+    )}>
+      {/* # */}
+      <td className="px-2 py-1 text-muted-foreground text-center font-mono">{index + 1}</td>
+
+      {/* ✓ checkbox */}
+      <td className={cellCls}>
+        <input
+          type="checkbox"
+          checked={row._checked}
+          onChange={e => up({ _checked: e.target.checked })}
+          className="accent-primary w-3.5 h-3.5 cursor-pointer"
+        />
+      </td>
+
+      {/* Date */}
+      <td className={cellCls}>
+        <Input
+          type="date"
+          value={row.date}
+          onChange={e => up({ date: e.target.value })}
+          className={cn('h-7 text-xs w-32', !row.date && 'border-destructive')}
+        />
+      </td>
+
+      {/* Person */}
+      <td className={cellCls}>
+        <Select value={row.person} onValueChange={v => up({ person: v as Person, accountId: undefined })}>
+          <SelectTrigger className="h-7 text-xs w-24">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PERSONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </td>
+
+      {/* Type */}
+      <td className={cellCls}>
+        <Select
+          value={row.type}
+          onValueChange={v => up({ type: v as TransactionType, category: '', transferTo: undefined, transferToAccountId: undefined })}
+        >
+          <SelectTrigger className="h-7 text-xs w-24">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="expense">Expense</SelectItem>
+            <SelectItem value="income">Income</SelectItem>
+            <SelectItem value="transfer">Transfer</SelectItem>
+          </SelectContent>
+        </Select>
+      </td>
+
+      {/* Home/Debt */}
+      <td className={cellCls}>
+        <Select value={row.homeOrDebt} onValueChange={v => up({ homeOrDebt: v as HomeOrDebt, category: '' })}>
+          <SelectTrigger className="h-7 text-xs w-20">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="home">Home</SelectItem>
+            <SelectItem value="debt">Debt</SelectItem>
+          </SelectContent>
+        </Select>
+      </td>
+
+      {/* Category */}
+      <td className={cellCls}>
+        {row.type === 'transfer' ? (
+          <span className="text-muted-foreground italic text-xs">—</span>
+        ) : (
+          <Select
+            value={row.category || '__none__'}
+            onValueChange={v => up({ category: v === '__none__' ? '' : v })}
+          >
+            <SelectTrigger className={cn('h-7 text-xs w-36', !row.category && 'border-destructive')}>
+              <SelectValue placeholder="Category" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">— Select —</SelectItem>
+              {cats.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
+      </td>
+
+      {/* Amount */}
+      <td className={cellCls}>
+        <Input
+          type="number"
+          min={0}
+          value={row.amount || ''}
+          onChange={e => up({ amount: parseFloat(e.target.value) || 0 })}
+          className={cn('h-7 text-xs w-24', (!row.amount || row.amount <= 0) && 'border-destructive')}
+          placeholder="₹"
+        />
+      </td>
+
+      {/* Payment Mode */}
+      <td className={cellCls}>
+        <Select value={row.paymentMode} onValueChange={v => up({ paymentMode: v as PaymentMode })}>
+          <SelectTrigger className="h-7 text-xs w-20">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="cash">Cash</SelectItem>
+            <SelectItem value="bank">Bank</SelectItem>
+          </SelectContent>
+        </Select>
+      </td>
+
+      {/* Account */}
+      <td className={cellCls}>
+        <Select
+          value={row.accountId || '__none__'}
+          onValueChange={v => up({ accountId: v === '__none__' ? undefined : v })}
+        >
+          <SelectTrigger className="h-7 text-xs w-32">
+            <SelectValue placeholder="Account" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">— None —</SelectItem>
+            {personAccounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </td>
+
+      {/* Transfer To (only for transfer) */}
+      <td className={cellCls}>
+        {row.type === 'transfer' ? (
+          <div className="flex gap-1">
+            <Select
+              value={row.transferTo || '__none__'}
+              onValueChange={v => up({ transferTo: v === '__none__' ? undefined : (v as Person), transferToAccountId: undefined })}
+            >
+              <SelectTrigger className="h-7 text-xs w-24">
+                <SelectValue placeholder="To Person" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">— None —</SelectItem>
+                {PERSONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {row.transferTo && (
+              <Select
+                value={row.transferToAccountId || '__none__'}
+                onValueChange={v => up({ transferToAccountId: v === '__none__' ? undefined : v })}
+              >
+                <SelectTrigger className="h-7 text-xs w-28">
+                  <SelectValue placeholder="To Account" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— None —</SelectItem>
+                  {toAccounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
           </div>
-          {sampleRow && (
-            <div>
-              <p className="text-[11px] text-slate-500 mb-1 font-semibold">First row raw values from SheetJS:</p>
-              <pre className="text-[10px] bg-slate-900 rounded-lg p-3 overflow-x-auto text-slate-400 max-h-48">
-                {JSON.stringify(sampleRow, null, 2)}
-              </pre>
-              <p className="text-[11px] text-slate-500 mt-2 mb-1 font-semibold">First row after normalization:</p>
-              <pre className="text-[10px] bg-slate-900 rounded-lg p-3 overflow-x-auto text-emerald-400 max-h-48">
-                {JSON.stringify(normalizeRow(sampleRow), null, 2)}
-              </pre>
-            </div>
+        ) : (
+          <span className="text-muted-foreground italic text-xs">—</span>
+        )}
+      </td>
+
+      {/* Notes */}
+      <td className={cellCls}>
+        <Input
+          value={row.notes}
+          onChange={e => up({ notes: e.target.value })}
+          className="h-7 text-xs w-40"
+          placeholder="Notes…"
+        />
+      </td>
+
+      {/* Delete */}
+      <td className={cellCls}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 text-destructive hover:bg-destructive/10"
+          onClick={() => onDelete(row._draftId)}
+        >
+          <Trash2 className="h-3 w-3" />
+        </Button>
+      </td>
+    </tr>
+  );
+}
+
+// ─── Image Preview Card ───────────────────────────────────────────────────────
+
+function ImageCard({ img, onRemove }: { img: UploadedImage; onRemove: (id: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="relative group rounded-xl overflow-hidden border border-border/40 bg-card shadow-sm">
+      <div
+        className="relative cursor-pointer"
+        style={{ height: expanded ? 'auto' : '100px' }}
+        onClick={() => setExpanded(v => !v)}
+      >
+        <img
+          src={img.previewUrl}
+          alt={img.file.name}
+          className="w-full object-cover"
+          style={{ height: expanded ? 'auto' : '100px' }}
+        />
+        {!expanded && (
+          <div className="absolute inset-0 bg-black/20 flex items-end p-1.5">
+            <span className="text-[10px] text-white/90 font-medium truncate">{img.file.name}</span>
+          </div>
+        )}
+        <div className="absolute top-1 right-1 flex gap-1">
+          {img.status === 'processing' && (
+            <span className="bg-primary/90 text-primary-foreground text-[9px] px-1.5 py-0.5 rounded-full flex items-center gap-1">
+              <Loader2 className="h-2.5 w-2.5 animate-spin" /> Processing
+            </span>
+          )}
+          {img.status === 'done' && (
+            <span className="bg-green-500/90 text-white text-[9px] px-1.5 py-0.5 rounded-full flex items-center gap-1">
+              <CheckCircle2 className="h-2.5 w-2.5" /> Done
+            </span>
+          )}
+          {img.status === 'error' && (
+            <span className="bg-destructive/90 text-destructive-foreground text-[9px] px-1.5 py-0.5 rounded-full flex items-center gap-1">
+              <AlertCircle className="h-2.5 w-2.5" /> Error
+            </span>
           )}
         </div>
+      </div>
+      {expanded && (
+        <div className="p-1.5 text-[10px] text-muted-foreground border-t border-border/40 flex justify-between items-center">
+          <span>{img.file.name}</span>
+          <button onClick={() => setExpanded(false)} className="text-muted-foreground hover:text-foreground">
+            <ChevronUp className="h-3 w-3" />
+          </button>
+        </div>
       )}
+      <button
+        onClick={() => onRemove(img.id)}
+        className="absolute top-1 left-1 h-5 w-5 rounded-full bg-black/50 text-white hidden group-hover:flex items-center justify-center hover:bg-destructive/80 transition-colors"
+      >
+        <X className="h-2.5 w-2.5" />
+      </button>
     </div>
   );
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-interface BulkUploadTransactionsProps {
-  addTransaction: (tx: Transaction) => void | Promise<void>;
-}
+type Stage = 'upload' | 'processing' | 'review' | 'saving' | 'done';
 
-const BulkUploadTransactions: React.FC<BulkUploadTransactionsProps> = ({ addTransaction }) => {
-  const [status, setStatus] = useState<ImportStatus>("idle");
-  const [parseProgress, setParseProgress] = useState(0);
-  const [importProgress, setImportProgress] = useState(0);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [invalidRows, setInvalidRows] = useState<ParseResult["invalidRows"]>([]);
-  const [fileName, setFileName] = useState<string>("");
-  const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [detectedHeaders, setDetectedHeaders] = useState<string[]>([]);
-  const [sampleRawRow, setSampleRawRow] = useState<Record<string, unknown> | undefined>();
+export default function BulkUploadTransactions() {
+  const { addTransaction } = useFinance();
+
+  const [images, setImages] = useState<UploadedImage[]>([]);
+  const [rows, setRows] = useState<EditableRow[]>([]);
+  const [stage, setStage] = useState<Stage>('upload');
+  const [saveProgress, setSaveProgress] = useState({ done: 0, total: 0 });
+  const [dragOver, setDragOver] = useState(false);
+  const [selectAll, setSelectAll] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const showToast = (message: string, type: "success" | "error" | "info" = "info") => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 5000);
-  };
+  const providerName = getActiveProviderName();
 
-  const processFile = useCallback(async (file: File) => {
-    const ext = file.name.split(".").pop()?.toLowerCase();
-    if (!["xlsx", "xls", "csv"].includes(ext ?? "")) {
-      showToast("Please upload .xlsx, .xls or .csv", "error");
-      return;
-    }
+  // ── Image ingestion ────────────────────────────────────────────────────────
 
-    setFileName(file.name);
-    setStatus("parsing");
-    setParseProgress(0);
-    setTransactions([]);
-    setInvalidRows([]);
-    setDetectedHeaders([]);
-    setSampleRawRow(undefined);
+  const addFiles = useCallback(async (files: File[]) => {
+    const imageFiles = files.filter(f => f.type.startsWith('image/'));
+    if (!imageFiles.length) { toast.error('Please upload image files only'); return; }
 
-    try {
-      const buffer = await readFileAsArrayBuffer(file);
-      const { rows, detectedHeaders: dh } = parseExcelFile(buffer);
-
-      // Always log — helps diagnose issues
-      console.group("[BulkUpload] File loaded: " + file.name);
-      console.log("SheetJS detected headers:", dh);
-      console.log("Total data rows:", rows.length);
-      if (rows[0]) {
-        console.log("Row 1 raw:", rows[0]);
-        console.log("Row 1 normalized:", normalizeRow(rows[0]));
-      }
-      console.groupEnd();
-
-      setDetectedHeaders(dh);
-      setSampleRawRow(rows[0]);
-
-      if (rows.length === 0) {
-        showToast("No data rows found in file", "error");
-        setStatus("error");
-        return;
-      }
-
-      const result = await parseRowsAsync(rows, setParseProgress);
-      setTransactions(result.transactions);
-      setInvalidRows(result.invalidRows);
-      setStatus("ready");
-
-      if (result.transactions.length === 0) {
-        showToast("0 valid rows — open Debug panel to diagnose", "error");
-      } else {
-        showToast(
-          `Parsed ${result.transactions.length} valid rows` +
-            (result.invalidRows.length ? `, ${result.invalidRows.length} skipped` : ""),
-          "info"
-        );
-      }
-    } catch (err) {
-      console.error("[BulkUpload] Error:", err);
-      showToast("Failed to parse file — check console", "error");
-      setStatus("error");
-    }
+    const newImgs: UploadedImage[] = await Promise.all(
+      imageFiles.map(async (file) => {
+        const base64 = await toBase64(file);
+        const previewUrl = URL.createObjectURL(file);
+        return {
+          id: 'img-' + Date.now().toString(36) + Math.random().toString(36).slice(2),
+          file,
+          previewUrl,
+          base64,
+          mimeType: file.type,
+          status: 'ready' as const,
+        };
+      })
+    );
+    setImages(prev => [...prev, ...newImgs]);
   }, []);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) processFile(file);
-    e.target.value = "";
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) addFiles(Array.from(e.target.files));
+    e.target.value = '';
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragging(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) processFile(file);
+    setDragOver(false);
+    addFiles(Array.from(e.dataTransfer.files));
   };
 
-  const handleImportAll = async () => {
-    if (transactions.length === 0) return;
-    setStatus("importing");
-    setImportProgress(0);
+  const removeImage = (id: string) => {
+    setImages(prev => {
+      const img = prev.find(i => i.id === id);
+      if (img) URL.revokeObjectURL(img.previewUrl);
+      return prev.filter(i => i.id !== id);
+    });
+  };
+
+  // ── AI Processing ──────────────────────────────────────────────────────────
+
+  const processImages = async () => {
+    if (!images.length) { toast.error('Upload at least one image first'); return; }
+    setStage('processing');
+    setImages(prev => prev.map(i => ({ ...i, status: 'processing' })));
 
     try {
-      for (let i = 0; i < transactions.length; i += CHUNK_SIZE) {
-        const chunk = transactions.slice(i, i + CHUNK_SIZE);
-        for (const tx of chunk) {
-          await addTransaction(tx);
-        }
-        setImportProgress(Math.round(((i + chunk.length) / transactions.length) * 100));
-        await new Promise((r) => setTimeout(r, 0));
+      const payload = images.map(i => ({ base64: i.base64, mimeType: i.mimeType }));
+      const drafts = await extractTransactionsFromImages(payload);
+
+      setImages(prev => prev.map(i => ({ ...i, status: 'done' })));
+
+      if (!drafts.length) {
+        toast.warning('AI found no transactions. Check the images or fill manually.');
+        setRows([{
+          _draftId: 'draft-manual-' + Date.now(),
+          _checked: true,
+          _hasError: true,
+          date: new Date().toISOString().split('T')[0],
+          person: 'Ajai',
+          type: 'expense',
+          category: '',
+          amount: 0,
+          paymentMode: 'cash',
+          homeOrDebt: 'home',
+          notes: '',
+        }]);
+        setStage('review');
+        return;
       }
-      setStatus("done");
-      showToast(`Imported ${transactions.length} transactions successfully`, "success");
-    } catch (err) {
-      console.error("[BulkUpload] Import error:", err);
-      showToast("Import failed — check console", "error");
-      setStatus("error");
+
+      const editableRows: EditableRow[] = drafts.map(d => ({
+        ...d,
+        _checked: true,
+        _hasError: rowHasError({ ...d, _checked: true, _hasError: false }),
+      }));
+      setRows(editableRows);
+      toast.success(`${editableRows.length} transactions extracted via ${providerName}!`);
+      setStage('review');
+    } catch (err: any) {
+      setImages(prev => prev.map(i => ({ ...i, status: 'error' })));
+      toast.error('AI processing failed: ' + (err?.message || 'Unknown error'));
+      setStage('upload');
     }
   };
 
-  const handleReset = () => {
-    setStatus("idle");
-    setTransactions([]);
-    setInvalidRows([]);
-    setFileName("");
-    setParseProgress(0);
-    setImportProgress(0);
-    setDetectedHeaders([]);
-    setSampleRawRow(undefined);
+  // ── Row editing ────────────────────────────────────────────────────────────
+
+  const updateRow = useCallback((draftId: string, patch: Partial<EditableRow>) => {
+    setRows(prev => prev.map(r => {
+      if (r._draftId !== draftId) return r;
+      const updated = { ...r, ...patch };
+      updated._hasError = rowHasError(updated);
+      return updated;
+    }));
+  }, []);
+
+  const deleteRow = useCallback((draftId: string) => {
+    setRows(prev => prev.filter(r => r._draftId !== draftId));
+  }, []);
+
+  const addBlankRow = () => {
+    const blank: EditableRow = {
+      _draftId: 'draft-blank-' + Date.now().toString(36),
+      _checked: true,
+      _hasError: true,
+      date: new Date().toISOString().split('T')[0],
+      person: 'Ajai',
+      type: 'expense',
+      category: '',
+      amount: 0,
+      paymentMode: 'cash',
+      homeOrDebt: 'home',
+      notes: '',
+    };
+    setRows(prev => [...prev, blank]);
   };
 
-  const summary = calcSummary(transactions);
-  const preview = transactions.slice(0, 10);
-  const showDebug = detectedHeaders.length > 0 && (transactions.length === 0 || invalidRows.length > 0);
+  const handleSelectAll = (checked: boolean) => {
+    setSelectAll(checked);
+    setRows(prev => prev.map(r => ({ ...r, _checked: checked })));
+  };
+
+  // ── Save ───────────────────────────────────────────────────────────────────
+
+  const approveAndSave = async () => {
+    const toSave = rows.filter(r => r._checked);
+    if (!toSave.length) { toast.error('Select at least one row'); return; }
+
+    const errRows = toSave.filter(r => r._hasError);
+    if (errRows.length) {
+      toast.error(`Fix ${errRows.length} row(s) with errors (highlighted in red) first`);
+      return;
+    }
+
+    setStage('saving');
+    setSaveProgress({ done: 0, total: toSave.length });
+
+    let saved = 0;
+    let failed = 0;
+
+    for (const row of toSave) {
+      try {
+        const txn = draftToTransaction(row);
+        await addTransaction(txn);
+        saved++;
+        setSaveProgress({ done: saved, total: toSave.length });
+      } catch {
+        failed++;
+      }
+    }
+
+    if (failed === 0) {
+      toast.success(`${saved} transaction${saved > 1 ? 's' : ''} saved successfully!`);
+      setStage('done');
+    } else {
+      toast.warning(`${saved} saved, ${failed} failed.`);
+      setStage('review');
+    }
+  };
+
+  const reset = () => {
+    images.forEach(i => URL.revokeObjectURL(i.previewUrl));
+    setImages([]);
+    setRows([]);
+    setStage('upload');
+    setSaveProgress({ done: 0, total: 0 });
+    setSelectAll(true);
+  };
+
+  // ── Stats ──────────────────────────────────────────────────────────────────
+
+  const checkedRows = rows.filter(r => r._checked);
+  const errorRows = rows.filter(r => r._hasError);
+  const totalAmount = checkedRows.reduce((s, r) => s + (r.amount || 0), 0);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // RENDER
+  // ─────────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-slate-100 p-4 md:p-8">
-      <style>{`
-        @keyframes slideUp {
-          from { opacity: 0; transform: translateY(20px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
-
-      <div className="max-w-5xl mx-auto space-y-6">
-
-        {/* Header */}
-        <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-background pb-24">
+      {/* ── Header ── */}
+      <div className="sticky top-0 z-20 bg-background/95 backdrop-blur border-b border-border/50 px-4 py-3">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div>
-            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-white">
-              Bulk Import
+            <h1 className="text-base font-bold text-foreground flex items-center gap-2">
+              <ImagePlus className="h-4 w-4 text-primary" />
+              Upload Account Book
             </h1>
-            <p className="text-slate-400 text-sm mt-1">
-              Upload your Excel / CSV to import all transactions at once
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Upload handwritten pages → AI reads → Edit → Save to DB
             </p>
           </div>
-          {!["idle", "parsing", "importing"].includes(status) && (
-            <button
-              onClick={handleReset}
-              className="text-xs px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
-            >
-              ↺ Reset
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {/* AI Provider badge */}
+            <Badge variant="outline" className="text-[10px] gap-1">
+              <Sparkles className="h-2.5 w-2.5 text-primary" />
+              {providerName}
+            </Badge>
+            {stage !== 'upload' && (
+              <Button variant="ghost" size="sm" onClick={reset} className="h-7 text-xs gap-1">
+                <RotateCcw className="h-3 w-3" /> Reset
+              </Button>
+            )}
+          </div>
         </div>
 
-        {/* ── Drop Zone ── */}
-        {status === "idle" && (
-          <div
-            className={`relative border-2 border-dashed rounded-3xl p-12 text-center cursor-pointer transition-all duration-200
-              ${isDragging
-                ? "border-indigo-400 bg-indigo-950/30 scale-[1.01]"
-                : "border-slate-700 hover:border-indigo-500 hover:bg-slate-800/40"}`}
-            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-            onDragLeave={() => setIsDragging(false)}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFileChange} />
-            <div className="text-5xl mb-4">📊</div>
-            <p className="text-lg font-semibold text-slate-200">Drop your Excel / CSV here</p>
-            <p className="text-sm text-slate-500 mt-2">or click to browse — .xlsx, .xls, .csv</p>
-          </div>
-        )}
-
-        {/* ── Parsing progress ── */}
-        {status === "parsing" && (
-          <div className="rounded-3xl bg-slate-800/60 p-8 space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-              <span className="font-semibold text-slate-200">Parsing {fileName}…</span>
-            </div>
-            <ProgressBar pct={parseProgress} color="from-indigo-500 to-violet-500" />
-          </div>
-        )}
-
-        {/* ── Importing progress ── */}
-        {status === "importing" && (
-          <div className="rounded-3xl bg-slate-800/60 p-8 space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="w-5 h-5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-              <span className="font-semibold text-slate-200">
-                Importing… {Math.round((importProgress / 100) * transactions.length).toLocaleString()} / {transactions.length.toLocaleString()}
-              </span>
-            </div>
-            <ProgressBar pct={importProgress} color="from-emerald-500 to-teal-400" />
-          </div>
-        )}
-
-        {/* ── Ready / Done / Error ── */}
-        {["ready", "done", "error"].includes(status) && (
-          <>
-            {/* Stats */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <StatCard label="Total Rows" value={transactions.length.toLocaleString()} color="bg-slate-800 text-white" />
-              <StatCard label="Income"     value={fmt(summary.income)}                 color="bg-emerald-950 text-emerald-300" />
-              <StatCard label="Expense"    value={fmt(summary.expense)}                color="bg-red-950 text-red-300" />
-              <StatCard label="Skipped"    value={invalidRows.length.toString()}       color="bg-amber-950 text-amber-300" />
-            </div>
-
-            {/* File badge */}
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="bg-slate-800 text-slate-400 px-3 py-1 rounded-full">📄 {fileName}</span>
-              {invalidRows.length > 0 && (
-                <span className="bg-amber-900/50 text-amber-400 px-3 py-1 rounded-full">
-                  ⚠️ {invalidRows.length} rows skipped
+        {/* Step indicator */}
+        <div className="max-w-7xl mx-auto mt-2">
+          <div className="flex items-center gap-0 text-[10px]">
+            {(['upload', 'processing', 'review', 'saving', 'done'] as Stage[]).map((s, i, arr) => (
+              <React.Fragment key={s}>
+                <span className={cn(
+                  'px-2 py-0.5 rounded-full font-medium capitalize',
+                  stage === s ? 'bg-primary text-primary-foreground' : 'text-muted-foreground',
+                )}>
+                  {i + 1}. {s}
                 </span>
+                {i < arr.length - 1 && <span className="text-border mx-0.5">›</span>}
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto px-4 pt-4 space-y-4">
+
+        {/* ═══ STAGE: UPLOAD ════════════════════════════════════════════════ */}
+        {(stage === 'upload' || stage === 'processing') && (
+          <>
+            {/* Drop zone */}
+            <div
+              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={cn(
+                'border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all',
+                dragOver
+                  ? 'border-primary bg-primary/5 scale-[1.01]'
+                  : 'border-border/50 hover:border-primary/50 hover:bg-muted/30',
               )}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*"
+                className="hidden"
+                onChange={handleFileInput}
+              />
+              <div className="flex flex-col items-center gap-3">
+                <div className="h-14 w-14 rounded-2xl bg-primary/10 flex items-center justify-center">
+                  <Upload className="h-7 w-7 text-primary" />
+                </div>
+                <div>
+                  <p className="font-semibold text-foreground text-sm">
+                    {dragOver ? 'Drop images here…' : 'Tap or drag account book images'}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Supports JPG, PNG, HEIC — upload multiple pages at once
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" className="pointer-events-none text-xs h-8">
+                  <ImagePlus className="h-3.5 w-3.5 mr-1.5" /> Choose Images
+                </Button>
+              </div>
             </div>
 
-            {/* Debug panel — shown whenever something went wrong */}
-            {showDebug && (
-              <DebugPanel headers={detectedHeaders} sampleRow={sampleRawRow} />
-            )}
-
-            {/* No valid rows */}
-            {transactions.length === 0 && (
-              <div className="rounded-2xl bg-red-950/40 border border-red-800/50 px-6 py-5 text-center space-y-1">
-                <p className="text-red-400 font-semibold text-sm">No valid rows could be parsed.</p>
-                <p className="text-red-600 text-xs">
-                  Use the Debug panel above to check which headers SheetJS detected and whether they mapped correctly. Copy the raw header names from your Excel and share them if you need help fixing the aliases.
-                </p>
-              </div>
-            )}
-
-            {/* Preview Table */}
-            {transactions.length > 0 && (
-              <div className="rounded-2xl overflow-hidden border border-slate-800">
-                <div className="bg-slate-800/80 px-4 py-3 flex items-center justify-between">
-                  <span className="text-sm font-semibold text-slate-300">
-                    Preview — first {Math.min(10, transactions.length)} rows
-                  </span>
-                  <span className="text-xs text-slate-500">
-                    {transactions.length.toLocaleString()} total ready
-                  </span>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="bg-slate-900/60 text-slate-400 uppercase tracking-wider text-[10px]">
-                        {["Date", "Person", "Type", "Category", "Amount", "Mode", "Tag", "Notes"].map((h) => (
-                          <th key={h} className="px-3 py-2 text-left font-semibold whitespace-nowrap">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {preview.map((tx, i) => (
-                        <tr key={i} className={`border-t border-slate-800/60 hover:bg-slate-800/30 transition ${i % 2 === 0 ? "bg-slate-900/20" : ""}`}>
-                          <td className="px-3 py-2 whitespace-nowrap text-slate-300 font-mono text-[11px]">{tx.date}</td>
-                          <td className="px-3 py-2 whitespace-nowrap"><Badge color="violet">{tx.person}</Badge></td>
-                          <td className="px-3 py-2 whitespace-nowrap"><Badge color={tx.type === "income" ? "emerald" : "red"}>{tx.type}</Badge></td>
-                          <td className="px-3 py-2 text-slate-300 whitespace-nowrap text-[11px]">{tx.category}</td>
-                          <td className="px-3 py-2 font-semibold whitespace-nowrap">
-                            <span className={tx.type === "income" ? "text-emerald-400" : "text-red-400"}>{fmt(tx.amount)}</span>
-                          </td>
-                          <td className="px-3 py-2 whitespace-nowrap"><Badge color={tx.paymentMode === "cash" ? "amber" : "blue"}>{tx.paymentMode}</Badge></td>
-                          <td className="px-3 py-2 whitespace-nowrap"><Badge color={tx.homeOrDebt === "debt" ? "rose" : "slate"}>{tx.homeOrDebt}</Badge></td>
-                          <td className="px-3 py-2 text-slate-500 max-w-[200px] truncate text-[11px]">{tx.notes}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* Import button */}
-            {status === "ready" && transactions.length > 0 && (
-              <div className="flex justify-end">
-                <button
-                  onClick={handleImportAll}
-                  className="px-8 py-3 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600
-                    hover:from-indigo-500 hover:to-violet-500 text-white font-bold text-sm
-                    shadow-lg shadow-indigo-900/40 transition-all duration-200 active:scale-95"
-                >
-                  ⬆️ Import All {transactions.length.toLocaleString()} Transactions
-                </button>
-              </div>
-            )}
-
-            {/* Done banner */}
-            {status === "done" && (
-              <div className="rounded-2xl bg-emerald-950/60 border border-emerald-800 px-6 py-4 flex items-center gap-3">
-                <span className="text-2xl">🎉</span>
+            {/* AI provider info */}
+            {!images.length && (
+              <div className="rounded-xl border border-border/40 bg-muted/20 p-3 flex gap-2 text-xs text-muted-foreground">
+                <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary" />
                 <div>
-                  <p className="font-bold text-emerald-300">Import Complete!</p>
-                  <p className="text-xs text-emerald-600">{transactions.length.toLocaleString()} transactions added successfully.</p>
+                  <p className="font-medium text-foreground mb-0.5">AI Provider: {providerName}</p>
+                  {/* <p>
+                    Set <code className="bg-muted px-1 rounded text-[10px]">VITE_CLAUDE_AI_ENABLED=true</code> +{' '}
+                    <code className="bg-muted px-1 rounded text-[10px]">VITE_CLAUDE_AI_TOKEN</code> in your .env for Claude AI.
+                    Or <code className="bg-muted px-1 rounded text-[10px]">VITE_OPENAI_ENABLED=true</code> +{' '}
+                    <code className="bg-muted px-1 rounded text-[10px]">VITE_OPENAI_API_KEY</code> for GPT-4o.
+                  </p> */}
                 </div>
+              </div>
+            )}
+
+            {/* Image grid */}
+            {images.length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-foreground">
+                    {images.length} image{images.length > 1 ? 's' : ''} ready
+                  </span>
+                  <Button variant="ghost" size="sm" className="h-6 text-[11px] text-destructive" onClick={() => { images.forEach(i => URL.revokeObjectURL(i.previewUrl)); setImages([]); }}>
+                    Clear all
+                  </Button>
+                </div>
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                  {images.map(img => (
+                    <ImageCard key={img.id} img={img} onRemove={removeImage} />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Process button */}
+            {images.length > 0 && (
+              <div className="flex justify-center pt-2">
+                <Button
+                  onClick={processImages}
+                  disabled={stage === 'processing'}
+                  size="lg"
+                  className="gap-2 px-8 font-semibold"
+                >
+                  {stage === 'processing' ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      AI Reading Handwriting…
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-4 w-4" />
+                      Extract Transactions with AI
+                    </>
+                  )}
+                </Button>
               </div>
             )}
           </>
         )}
-      </div>
 
-      {toast && <Toast message={toast.message} type={toast.type} />}
+        {/* ═══ STAGE: REVIEW ════════════════════════════════════════════════ */}
+        {stage === 'review' && (
+          <>
+            {/* Summary bar */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex-1 flex flex-wrap gap-2 text-xs">
+                <Badge variant="outline" className="gap-1">
+                  <CheckCircle2 className="h-3 w-3 text-green-500" />
+                  {checkedRows.length} selected
+                </Badge>
+                {errorRows.length > 0 && (
+                  <Badge variant="destructive" className="gap-1">
+                    <AlertCircle className="h-3 w-3" />
+                    {errorRows.length} need fix
+                  </Badge>
+                )}
+                <Badge variant="secondary" className="gap-1 font-mono">
+                  ₹{totalAmount.toLocaleString('en-IN')} total
+                </Badge>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={addBlankRow}>
+                  + Add Row
+                </Button>
+                <Button
+                  onClick={approveAndSave}
+                  disabled={!checkedRows.length || !!errorRows.find(r => r._checked)}
+                  size="sm"
+                  className="h-7 text-xs gap-1 font-semibold"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Approve & Save ({checkedRows.length})
+                </Button>
+              </div>
+            </div>
+
+            {/* Image thumbnails (collapsed) */}
+            <details className="group">
+              <summary className="cursor-pointer text-xs text-muted-foreground flex items-center gap-1 hover:text-foreground select-none">
+                <Eye className="h-3 w-3" />
+                View source images ({images.length})
+                <ChevronDown className="h-3 w-3 group-open:rotate-180 transition-transform" />
+              </summary>
+              <div className="mt-2 grid grid-cols-3 sm:grid-cols-6 gap-2">
+                {images.map(img => (
+                  <ImageCard key={img.id} img={img} onRemove={() => {}} />
+                ))}
+              </div>
+            </details>
+
+            {/* Error note */}
+            {errorRows.length > 0 && (
+              <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 flex gap-2 text-xs text-destructive">
+                <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                Rows highlighted in red have missing/invalid data. Fix them or uncheck to skip.
+              </div>
+            )}
+
+            {/* Editable table */}
+            <div className="rounded-xl border border-border/40 overflow-auto shadow-sm">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border/50 bg-muted/40">
+                    <th className="px-2 py-2 text-center text-muted-foreground font-medium w-8">#</th>
+                    <th className="px-1.5 py-2 text-center w-8">
+                      <input
+                        type="checkbox"
+                        checked={selectAll}
+                        onChange={e => handleSelectAll(e.target.checked)}
+                        className="accent-primary w-3.5 h-3.5 cursor-pointer"
+                      />
+                    </th>
+                    <th className="px-1.5 py-2 text-left text-muted-foreground font-medium">Date</th>
+                    <th className="px-1.5 py-2 text-left text-muted-foreground font-medium">Person</th>
+                    <th className="px-1.5 py-2 text-left text-muted-foreground font-medium">Type</th>
+                    <th className="px-1.5 py-2 text-left text-muted-foreground font-medium">Home/Debt</th>
+                    <th className="px-1.5 py-2 text-left text-muted-foreground font-medium">Category</th>
+                    <th className="px-1.5 py-2 text-left text-muted-foreground font-medium">Amount</th>
+                    <th className="px-1.5 py-2 text-left text-muted-foreground font-medium">Mode</th>
+                    <th className="px-1.5 py-2 text-left text-muted-foreground font-medium">Account</th>
+                    <th className="px-1.5 py-2 text-left text-muted-foreground font-medium">Transfer To</th>
+                    <th className="px-1.5 py-2 text-left text-muted-foreground font-medium">Notes</th>
+                    <th className="px-1.5 py-2 text-center w-8"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row, i) => (
+                    <RowEditor
+                      key={row._draftId}
+                      row={row}
+                      index={i}
+                      onUpdate={updateRow}
+                      onDelete={deleteRow}
+                    />
+                  ))}
+                </tbody>
+              </table>
+              {rows.length === 0 && (
+                <div className="text-center py-8 text-muted-foreground text-xs">
+                  No rows. <button onClick={addBlankRow} className="text-primary underline">Add a row manually</button>
+                </div>
+              )}
+            </div>
+
+            {/* Bottom approve button (sticky) */}
+            <div className="sticky bottom-20 flex justify-center">
+              <Button
+                onClick={approveAndSave}
+                disabled={!checkedRows.length || !!errorRows.find(r => r._checked)}
+                size="lg"
+                className="gap-2 px-10 font-semibold shadow-lg"
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                Approve & Save {checkedRows.length} Transaction{checkedRows.length !== 1 ? 's' : ''}
+              </Button>
+            </div>
+          </>
+        )}
+
+        {/* ═══ STAGE: SAVING ════════════════════════════════════════════════ */}
+        {stage === 'saving' && (
+          <div className="flex flex-col items-center justify-center gap-4 py-16">
+            <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+              <Loader2 className="h-8 w-8 text-primary animate-spin" />
+            </div>
+            <p className="font-semibold text-foreground">
+              Saving transactions…
+            </p>
+            <div className="w-64">
+              <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                <span>{saveProgress.done} of {saveProgress.total}</span>
+                <span>{Math.round((saveProgress.done / saveProgress.total) * 100)}%</span>
+              </div>
+              <div className="h-2 rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full bg-primary rounded-full transition-all duration-300"
+                  style={{ width: `${(saveProgress.done / saveProgress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ═══ STAGE: DONE ══════════════════════════════════════════════════ */}
+        {stage === 'done' && (
+          <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
+            <div className="h-20 w-20 rounded-full bg-green-500/15 flex items-center justify-center">
+              <CheckCircle2 className="h-10 w-10 text-green-500" />
+            </div>
+            <div>
+              <p className="font-bold text-lg text-foreground">All saved!</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                {saveProgress.total} transaction{saveProgress.total !== 1 ? 's' : ''} added to your account book.
+              </p>
+            </div>
+            <div className="flex gap-3 mt-2">
+              <Button variant="outline" size="sm" onClick={reset} className="gap-1">
+                <Upload className="h-3.5 w-3.5" /> Upload More
+              </Button>
+              <Button size="sm" onClick={() => window.location.href = '/transactions'} className="gap-1">
+                <Eye className="h-3.5 w-3.5" /> View Transactions
+              </Button>
+            </div>
+          </div>
+        )}
+
+      </div>
     </div>
   );
-};
-
-export default BulkUploadTransactions;
+}
