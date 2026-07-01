@@ -277,7 +277,8 @@ export default function Transactions() {
   const [search, setSearch]               = useState('');
   const [filterPerson, setFilterPerson]   = useState('all');
   const [filterType, setFilterType]       = useState('all');
-  const [filterCategory, setFilterCategory] = useState('all'); // ← NEW
+  const [filterCategory, setFilterCategory] = useState('all');
+  const [filterAccount, setFilterAccount] = useState('all');
   const [filterDate, setFilterDate]       = useState('');
   const [page, setPage]                   = useState(1);
   const [editTarget, setEditTarget]       = useState<Transaction | null>(null);
@@ -285,11 +286,11 @@ export default function Transactions() {
   const [deleteTarget, setDeleteTarget]   = useState<Transaction | null>(null);
 
   const today = new Date().toISOString().split('T')[0];
-  const hasActiveFilters = search || filterPerson !== 'all' || filterType !== 'all' || filterDate || filterCategory !== 'all';
+  const hasActiveFilters = search || filterPerson !== 'all' || filterType !== 'all' || filterDate || filterCategory !== 'all' || filterAccount !== 'all';
 
   const clearAllFilters = () => {
     setSearch(''); setFilterPerson('all'); setFilterType('all');
-    setFilterCategory('all'); setFilterDate(''); setPage(1);
+    setFilterCategory('all'); setFilterAccount('all'); setFilterDate(''); setPage(1);
   };
 
   // Build unique category list for dropdown (from this month's txns + static lists)
@@ -300,11 +301,19 @@ export default function Transactions() {
     return merged;
   }, [state.transactions, selectedYear, selectedMonth]);
 
+  // Account options — filtered by selected person if one is chosen
+  const accountOptions = useMemo(() => {
+    return filterPerson !== 'all'
+      ? ACCOUNTS.filter(a => a.person === filterPerson)
+      : ACCOUNTS;
+  }, [filterPerson]);
+
   const allTxns = useMemo(() => {
     let list = getMonthTransactions(state.transactions, selectedYear, selectedMonth);
     if (filterPerson   !== 'all') list = list.filter(t => t.person   === filterPerson);
     if (filterType     !== 'all') list = list.filter(t => t.type     === filterType);
-    if (filterCategory !== 'all') list = list.filter(t => t.category === filterCategory); // ← NEW
+    if (filterCategory !== 'all') list = list.filter(t => t.category === filterCategory);
+    if (filterAccount  !== 'all') list = list.filter(t => t.accountId === filterAccount || t.transferToAccountId === filterAccount);
     if (filterDate)                list = list.filter(t => t.date     === filterDate);
     if (search) {
       const q = search.toLowerCase();
@@ -316,7 +325,7 @@ export default function Transactions() {
       );
     }
     return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [state.transactions, selectedYear, selectedMonth, filterPerson, filterType, filterCategory, filterDate, search]);
+  }, [state.transactions, selectedYear, selectedMonth, filterPerson, filterType, filterCategory, filterAccount, filterDate, search]);
 
   const totalIncome  = allTxns.filter(t => t.type === 'income' ).reduce((s, t) => s + t.amount, 0);
   const totalExpense = allTxns.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
@@ -398,7 +407,7 @@ export default function Transactions() {
 
         {/* Row 1: Person + Type */}
         <div className="flex gap-2">
-          <Select value={filterPerson} onValueChange={v => { setFilterPerson(v); resetPage(); }}>
+          <Select value={filterPerson} onValueChange={v => { setFilterPerson(v); setFilterAccount('all'); resetPage(); }}>
             <SelectTrigger className="flex-1"><SelectValue placeholder="Person" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Persons</SelectItem>
@@ -423,14 +432,14 @@ export default function Transactions() {
         </Select>
         </div>
 
-        {/* Row 2: Category filter ← NEW */}
-        {/* <Select value={filterCategory} onValueChange={v => { setFilterCategory(v); resetPage(); }}>
-          <SelectTrigger className="w-full"><SelectValue placeholder="All Categories" /></SelectTrigger>
+        {/* Row 2: Account filter */}
+        <Select value={filterAccount} onValueChange={v => { setFilterAccount(v); resetPage(); }}>
+          <SelectTrigger className="w-full"><SelectValue placeholder="All Accounts" /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Categories</SelectItem>
-            {categoryOptions.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+            <SelectItem value="all">All Accounts</SelectItem>
+            {accountOptions.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
           </SelectContent>
-        </Select> */}
+        </Select>
 
         {/* Row 3: Date + Clear */}
         <div className="flex gap-2 items-center">
