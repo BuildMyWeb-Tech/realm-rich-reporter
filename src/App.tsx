@@ -11,6 +11,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { FinanceProvider, useFinance } from "@/contexts/FinanceContext";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import BottomNav from "@/components/BottomNav";
+import PWAInstallPrompt from "@/components/PWAInstallPrompt";
+import PWAUpdateToast from "@/components/PWAUpdateToast";
 import Dashboard from "./pages/Dashboard";
 import Transactions from "./pages/Transactions";
 import BudgetPage from "./pages/BudgetPage";
@@ -120,6 +122,8 @@ const App = () => (
       <AuthProvider>
         <AuthGate />
       </AuthProvider>
+      <PWAInstallPrompt />
+      <PWAUpdateToast />
     </TooltipProvider>
   </QueryClientProvider>
 );

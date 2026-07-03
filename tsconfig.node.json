@@ -11,6 +11,8 @@
     "isolatedModules": true,
     "moduleDetection": "force",
     "noEmit": true,
+    "types": ["vite-plugin-pwa/client"],
+
 
     /* Linting */
     "strict": true,
