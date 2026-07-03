@@ -11,6 +11,65 @@ export default defineConfig(({ mode }) => ({
     historyApiFallback: true,
     hmr: { overlay: false },
   },
+
+  build: {
+    // Raise chunk warning threshold to 1MB (just a warning, not an error)
+    chunkSizeWarningLimit: 1000,
+
+    rollupOptions: {
+      output: {
+        // ── Manual code splitting ─────────────────────────────────────────
+        // Splits the giant index.js into smaller cacheable chunks so each
+        // chunk stays well under the 2MB workbox precache limit.
+        manualChunks: {
+          // React core
+          "vendor-react": ["react", "react-dom", "react/jsx-runtime"],
+
+          // Router
+          "vendor-router": ["react-router-dom"],
+
+          // Radix UI primitives (large — split separately)
+          "vendor-radix": [
+            "@radix-ui/react-dialog",
+            "@radix-ui/react-select",
+            "@radix-ui/react-accordion",
+            "@radix-ui/react-alert-dialog",
+            "@radix-ui/react-avatar",
+            "@radix-ui/react-checkbox",
+            "@radix-ui/react-dropdown-menu",
+            "@radix-ui/react-label",
+            "@radix-ui/react-popover",
+            "@radix-ui/react-progress",
+            "@radix-ui/react-separator",
+            "@radix-ui/react-slot",
+            "@radix-ui/react-switch",
+            "@radix-ui/react-tabs",
+            "@radix-ui/react-toast",
+            "@radix-ui/react-tooltip",
+          ],
+
+          // Charting
+          "vendor-charts": ["recharts"],
+
+          // Supabase client
+          "vendor-supabase": ["@supabase/supabase-js"],
+
+          // Tanstack Query
+          "vendor-query": ["@tanstack/react-query"],
+
+          // Date utilities
+          "vendor-date": ["date-fns"],
+
+          // Form handling
+          "vendor-form": ["react-hook-form", "@hookform/resolvers", "zod"],
+
+          // Icons (lucide is large)
+          "vendor-icons": ["lucide-react"],
+        },
+      },
+    },
+  },
+
   plugins: [
     react(),
     mode === "development" && componentTagger(),
@@ -25,15 +84,16 @@ export default defineConfig(({ mode }) => ({
         "icons/apple-touch-icon.png",
       ],
 
-      // Use the manifest.json we created in /public
       manifest: false,
       manifestFilename: "manifest.json",
 
       workbox: {
-        // Cache shell + all built assets
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
+        // ── FIX: raise the per-file precache limit to 4MB ────────────────
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024, // 4 MB
 
-        // Runtime caching strategies
+        // Only precache JS/CSS/HTML — skip large images (they're runtime cached)
+        globPatterns: ["**/*.{js,css,html,woff2}"],
+
         runtimeCaching: [
           // Supabase API — network first, fall back to cache
           {
@@ -46,7 +106,7 @@ export default defineConfig(({ mode }) => ({
               cacheableResponse: { statuses: [0, 200] },
             },
           },
-          // OpenAI / Claude API — network only (never cache AI calls)
+          // OpenAI / Claude — never cache
           {
             urlPattern: /^https:\/\/(api\.openai\.com|api\.anthropic\.com)\/.*/i,
             handler: "NetworkOnly",
@@ -61,7 +121,15 @@ export default defineConfig(({ mode }) => ({
               cacheableResponse: { statuses: [0, 200] },
             },
           },
-          // Images
+          // Icons and images — runtime cache
+          {
+            urlPattern: /\/icons\/.*\.png$/i,
+            handler: "CacheFirst",
+            options: {
+              cacheName: "icons-cache",
+              expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 30 },
+            },
+          },
           {
             urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp|ico)$/i,
             handler: "CacheFirst",
@@ -72,16 +140,12 @@ export default defineConfig(({ mode }) => ({
           },
         ],
 
-        // Skip waiting — activate new SW immediately
         skipWaiting: true,
         clientsClaim: true,
-
-        // Don't try to cache these at all
         navigateFallbackDenylist: [/^\/api\//],
       },
 
       devOptions: {
-        // Enable PWA in dev so you can test install prompt locally
         enabled: false,
         type: "module",
       },
